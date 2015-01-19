@@ -20,6 +20,7 @@ import pprint
 import hashlib
 import logging
 import json
+import argparse
 
 import boto
 from boto.s3.key import Key
@@ -270,13 +271,60 @@ class S4Backupper():
         self._upload_to_s3(s3path, state_file_path)
 
 
-def execute_backup():
-    config_json_path = os.path.join(os.getcwd(), CONFIG_DIR, CONFIG_FILE_NAME)
-    print("Config file: %s" % config_json_path)
+def init():
+    config_path = os.path.join(os.getcwd(), CONFIG_DIR)
+    config_json_path = os.path.join(config_path, CONFIG_FILE_NAME)
+
+    if os.path.isdir(config_path) and os.path.isfile(config_json_path):
+        raise Exception('Current working directory is already initialized!')
+
+    if not os.path.isdir(config_path):
+        os.mkdir(config_path)
 
     if not os.path.isfile(config_json_path):
-        raise Exception('config file is not found! file:%s' % config_json_path)
+        with open(config_json_path, 'wt') as f:
+            json.dump({}, f)
 
+    print('Initialization finished!')
+
+
+def _assure_initialized():
+    config_path = os.path.join(os.getcwd(), CONFIG_DIR)
+    config_json_path = os.path.join(config_path, CONFIG_FILE_NAME)
+
+    if not os.path.isdir(config_path) or not os.path.isfile(config_json_path):
+        raise Exception('Current working directory is not initialized!')
+
+
+def config(args):
+    _assure_initialized()
+
+    config_json_path = os.path.join(os.getcwd(), CONFIG_DIR, CONFIG_FILE_NAME)
+    with open(config_json_path) as f:
+        config_dict = json.load(f)
+
+    if args.list:
+        pprint.pprint(config_dict)
+        return
+
+    if 'set' in args and args.set is not None:
+        set_values = args.set
+        pprint.pprint(set_values)
+        key = set_values[0]
+        value = set_values[1]
+        if value == '':
+            config_dict.pop(key, None)
+        else:
+            config_dict[key] = value
+        with open(config_json_path, 'wt') as f:
+            json.dump(config_dict, f)
+        return
+
+
+def execute_backup(dry_run_flg):
+    _assure_initialized()
+
+    config_json_path = os.path.join(os.getcwd(), CONFIG_DIR, CONFIG_FILE_NAME)
     with open(config_json_path) as f:
         config_dict = json.load(f)
 
@@ -298,12 +346,35 @@ def execute_backup():
         aws_secret_access_key=aws_secret_access_key,
         s3bucket_name=config_dict['s3bucket'],
         s3prefix=config_dict['s3prefix'],
-        dry_run_flg=True,
+        dry_run_flg=dry_run_flg,
     )
     archiver.backup()
 
 
 if __name__ == '__main__':
-    execute_backup()
+    parser = argparse.ArgumentParser()
+
+    subparsers = parser.add_subparsers(dest="subparser", help='sub-command help')
+
+    parser_init = subparsers.add_parser('init', help='initialize current working directory as backup target')
+
+    parser_config = subparsers.add_parser('config', help='list / set current working directory config')
+    parser_config.add_argument('-l', '--list', dest='list', action='store_true', help='List')
+    parser_config.add_argument('-s', '--set', nargs=2, dest='set', help='Set')
+
+    parser_push = subparsers.add_parser('push', help='execute backup against current working directory')
+    parser_push.add_argument('-d', '--dry', dest='dry_run', action='store_true', help='Dry run')
+
+    args = parser.parse_args()
+
+    if args.subparser == 'init':
+        init()
+    elif args.subparser == 'config':
+        pprint.pprint(args)
+        config(args)
+    else:
+        execute_backup(args.dry_run)
+
+
 
 
