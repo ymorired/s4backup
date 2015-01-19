@@ -223,7 +223,6 @@ class S4Backupper():
             self.logger.info('Bytes uploaded:%s scanned:%s total:%s' % (self.stats['bytes_uploaded'], self.stats['bytes_scanned'], self.stats['bytes_total']))
             self.logger.info('Files uploaded:%s scanned:%s total:%s' % (self.stats['files_uploaded'], self.stats['files_scanned'], self.stats['files_total']))
 
-
     def backup(self):
         self.logger.info('Snapshot version:%s' % self.snapshot_version)
         time_start = time.time()

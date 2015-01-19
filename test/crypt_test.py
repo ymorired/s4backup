@@ -1,9 +1,15 @@
+__author__ = 'mori.yuichiro'
+
 import unittest
+import os
 import subprocess
 import filecmp
 import binascii
 
 from crypt import Encryptor
+
+
+BASE_TESTFILE_DIR = os.path.join(os.getcwd(), 'test')
 
 
 class EncryptorTest(unittest.TestCase):
@@ -15,7 +21,7 @@ class EncryptorTest(unittest.TestCase):
         pass
 
     def test_encrypt_multi(self):
-        org_file = './test/check.txt'
+        org_file = os.path.join(BASE_TESTFILE_DIR, 'check.txt')
 
         with open(org_file, 'wt') as f:
             f.write('')
@@ -33,16 +39,15 @@ class EncryptorTest(unittest.TestCase):
         # iv_str = '000102030405060708090a0b0c0d0e0a'
         iv = Encryptor.generate_iv()
 
-        cryptor = Encryptor(
-            '\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f',
-            iv
-        )
-        # org_file = './test/check.txt'
+        key = '\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f'
+        # key_str = '000102030405060708090a0b0c0d0e0f'
+        cryptor = Encryptor(key, iv)
+
         enc_file = './test/check.enc.txt'
         cryptor.encrypt_file_by_path(org_file, enc_file)
 
         dec_file = './test/check.dec_openssl.txt'
-        key_str = '000102030405060708090a0b0c0d0e0f'
+        key_str = binascii.b2a_hex(key)
         iv_str = binascii.b2a_hex(iv)
         cmd = 'openssl enc -d -aes-128-cbc -in %s -out %s -K %s -iv %s' % (enc_file, dec_file, key_str, iv_str)
         subprocess.call(cmd, shell=True)
@@ -50,7 +55,7 @@ class EncryptorTest(unittest.TestCase):
         self.assertTrue(filecmp.cmp(org_file, dec_file))
 
     def test_decrypt_multi(self):
-        org_file = './test/check.txt'
+        org_file = os.path.join(BASE_TESTFILE_DIR, 'check.txt')
 
         with open(org_file, 'wt') as f:
             f.write('')
@@ -65,10 +70,10 @@ class EncryptorTest(unittest.TestCase):
 
     def _test_decrypt(self, org_file):
         iv = Encryptor.generate_iv()
+        key = '\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f'
 
-        # org_file = './test/check.txt'
         enc_file = './test/check.enc_openssl.txt'
-        key_str = '000102030405060708090a0b0c0d0e0f'
+        key_str = binascii.b2a_hex(key)
         iv_str = binascii.b2a_hex(iv)
         cmd = 'openssl enc -e -aes-128-cbc -in %s -out %s -K %s -iv %s' % (org_file, enc_file, key_str, iv_str)
         subprocess.call(cmd, shell=True)
@@ -79,10 +84,7 @@ class EncryptorTest(unittest.TestCase):
         #
         # self.assertTrue(filecmp.cmp(org_file, dec_file))
 
-        cryptor = Encryptor(
-            '\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f',
-            iv
-        )
+        cryptor = Encryptor(key, iv)
 
         dec_file = './test/check.dec.txt'
         cryptor.decrypt_file_by_path(enc_file, dec_file)
