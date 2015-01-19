@@ -20,6 +20,7 @@ import pprint
 import hashlib
 import logging
 import json
+import argparse
 
 import boto
 from boto.s3.key import Key
@@ -270,7 +271,7 @@ class S4Backupper():
         self._upload_to_s3(s3path, state_file_path)
 
 
-def execute_backup():
+def execute_backup(dry_run_flg=False):
     config_json_path = os.path.join(os.getcwd(), CONFIG_DIR, CONFIG_FILE_NAME)
     print("Config file: %s" % config_json_path)
 
@@ -298,12 +299,17 @@ def execute_backup():
         aws_secret_access_key=aws_secret_access_key,
         s3bucket_name=config_dict['s3bucket'],
         s3prefix=config_dict['s3prefix'],
-        dry_run_flg=True,
+        dry_run_flg=dry_run_flg,
     )
     archiver.backup()
 
 
 if __name__ == '__main__':
-    execute_backup()
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-d', '--dry_run', dest='dry_run', action='store_true', help='Dry run')
+
+    args = parser.parse_args()
+
+    execute_backup(args.dry_run)
 
 
