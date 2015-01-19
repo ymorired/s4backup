@@ -13,11 +13,14 @@ Icon
 .Spotlight-V100
 .Trashes
 
-
 ## vim and emacs
 *~
 *.sw[pon]
 *.bak
 *.old
 
+# python byte code
+*.pyc
+
 .idea
+
