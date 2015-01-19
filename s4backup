@@ -165,10 +165,18 @@ class S4Backupper():
             ignore_dirs=IGNORE_DIRS,
             ignore_filenames=IGNORE_FILE_RULES,
         )
+        self.update_count = 0
+        self.update_time = time.time()
+
+    def _get_key_from_s3(self, s3path):
+        if self.dry_run_flg:
+            self.logger.warning('get_key disabled s3path:%s' % s3path)
+            return None
+
+        return self.s3bucket.get_key(s3path)
 
     def _upload_to_s3(self, s3path, file_path):
         if self.dry_run_flg:
-            # pass
             self.logger.warning('uploaded disabled s3path:%s' % s3path)
             return
 
@@ -203,9 +211,18 @@ class S4Backupper():
             self.stats['bytes_uploaded'] += size
             self.stats['files_uploaded'] += 1
 
-            self.logger.info('%s/%s uploaded file=%s' % (self.stats['files_scanned'], self.stats['files_total'], relative_path))
+            self.logger.debug('%s/%s uploaded file=%s' % (self.stats['files_scanned'], self.stats['files_total'], relative_path))
         else:
-            self.logger.info('%s/%s skipped file=%s' % (self.stats['files_scanned'], self.stats['files_total'], relative_path))
+            self.logger.debug('%s/%s skipped file=%s' % (self.stats['files_scanned'], self.stats['files_total'], relative_path))
+
+        self._auto_log_update()
+
+    def _auto_log_update(self):
+        self.update_count += 1
+        if self.update_count % 20 == 0:
+            self.logger.info('Bytes uploaded:%s scanned:%s total:%s' % (self.stats['bytes_uploaded'], self.stats['bytes_scanned'], self.stats['bytes_total']))
+            self.logger.info('Files uploaded:%s scanned:%s total:%s' % (self.stats['files_uploaded'], self.stats['files_scanned'], self.stats['files_total']))
+
 
     def backup(self):
         self.logger.info('Snapshot version:%s' % self.snapshot_version)
