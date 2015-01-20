@@ -18,9 +18,18 @@ class Encryptor():
         self.initial_vector = initial_vector
 
     @classmethod
+    def generate_str_keyset(cls, length):
+        return binascii.b2a_hex(cls.generate_iv()), binascii.b2a_hex(cls.generate_binkey(length))
+
+    @classmethod
     def generate_iv(cls):
         iv = Random.new().read(AES.block_size)
         return iv
+
+    @classmethod
+    def generate_binkey(cls, length=1):
+        key = Random.new().read(AES.block_size * length)
+        return key
 
     def encrypt_file(self, in_file_p, out_file_p):
 

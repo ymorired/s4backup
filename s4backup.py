@@ -17,10 +17,12 @@ import pprint
 import logging
 import json
 import argparse
+import tempfile
 
 import boto
 from boto.s3.key import Key
 
+from crypt import Encryptor
 from filelister import FileLister
 from util import *
 
@@ -41,7 +43,7 @@ IGNORE_DIRS = [
 
 class S4Backupper():
     def __init__(self, target_path, aws_access_key_id, aws_secret_access_key, s3bucket_name, s3prefix,
-                 dry_run_flg=False):
+                 config_dict, dry_run_flg=False):
 
         abs_path = os.path.abspath(target_path)
         if not os.path.isdir(abs_path):
@@ -99,54 +101,57 @@ class S4Backupper():
         self.update_count = 0
         self.update_time = time.time()
 
-    def _get_key_from_s3(self, s3path):
-        if self.dry_run_flg:
-            self.logger.warning('get_key disabled s3path:%s' % s3path)
-            return None
+        import binascii
+        self.encryptor = Encryptor(binascii.a2b_hex(config_dict['key']), binascii.a2b_hex(config_dict['iv']))
+        self.encryption_flg = True
 
-        return self.s3bucket.get_key(s3path)
+    def _backup_file(self, file_path, upload_path):
 
-    def _upload_to_s3(self, s3path, file_path):
-        if self.dry_run_flg:
-            self.logger.warning('uploaded disabled s3path:%s' % s3path)
-            return
+        with tempfile.TemporaryFile() as out_file_p:
+            with open(file_path, 'rb') as in_file_p:
 
-        obj_key = Key(self.s3bucket)
-        obj_key.key = s3path
-        obj_key.set_contents_from_filename(file_path)
+                file_backp_start_time = time.time()
 
-    def _backup_file(self, file_path):
-        relative_path = file_path.replace(self.target_path + '/', "", 1)
-        relative_path = '/' + relative_path
+                (mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime) = os.stat(file_path)
 
-        file_backp_start_time = time.time()
-        md5sum = calc_md5_from_filename(file_path)
-        md5_end_time = time.time()
-        md5_calc_seconds = md5_end_time - file_backp_start_time
+                encryption_seconds = 0
+                encrypted_size = 0
+                if self.encryption_flg:
+                    encryption_start_time = time.time()
+                    self.encryptor.encrypt_file(in_file_p, out_file_p)
+                    encryption_seconds = time.time() - encryption_start_time
+                    encrypted_size = out_file_p.tell()
+                    in_file_p.seek(0, os.SEEK_SET)
+                    out_file_p.seek(0, os.SEEK_SET)
 
-        (mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime) = os.stat(file_path)
+                md5_start_time = time.time()
+                md5sum = calc_md5_from_file(out_file_p)
+                md5_seconds = time.time() - md5_start_time
+                out_file_p.seek(0, os.SEEK_SET)
 
-        self.logger.debug('file=%s md5=%s size=%s time=%s' % (relative_path, md5sum, size, md5_calc_seconds))
-        if md5_calc_seconds > 1:
-            self.logger.warning('%s spent more time %s' % (relative_path, md5_calc_seconds))
+                self.logger.debug(
+                    'file=%s md5=%s size=%s ' % (upload_path, md5sum, size) +
+                    'enc_size=%s enc_sec=%s md5_sec=%s ' % (encrypted_size, encryption_seconds, md5_seconds)
+                )
 
-        self.stats['files_scanned'] += 1
-        self.stats['bytes_scanned'] += size
+                self.stats['files_scanned'] += 1
+                self.stats['bytes_scanned'] += size
 
-        s3path = self.s3prefix + '/data' + relative_path
-        fkey = self.s3bucket.get_key(s3path)
-        if fkey is None or fkey.etag != '"%s"' % md5sum:
-            # file does not exist
-            self._upload_to_s3(s3path, file_path)
+                s3path = '/'.join([self.s3prefix, upload_path])
+                fkey = self.s3bucket.get_key(s3path)
+                if fkey is None or fkey.etag != '"%s"' % md5sum:
+                    # file does not exist or modified
 
-            self.stats['bytes_uploaded'] += size
-            self.stats['files_uploaded'] += 1
+                    obj_key = Key(self.s3bucket)
+                    obj_key.key = s3path
+                    obj_key.set_contents_from_file(out_file_p)
 
-            self.logger.debug('%s/%s uploaded file=%s' % (self.stats['files_scanned'], self.stats['files_total'], relative_path))
-        else:
-            self.logger.debug('%s/%s skipped file=%s' % (self.stats['files_scanned'], self.stats['files_total'], relative_path))
+                    self.stats['bytes_uploaded'] += encrypted_size
+                    self.stats['files_uploaded'] += 1
 
-        self._auto_log_update()
+                    self.logger.debug('%s/%s uploaded file=%s' % (self.stats['files_scanned'], self.stats['files_total'], upload_path))
+                else:
+                    self.logger.debug('%s/%s skipped file=%s' % (self.stats['files_scanned'], self.stats['files_total'], upload_path))
 
     def _auto_log_update(self):
         self.update_count += 1
@@ -166,7 +171,6 @@ class S4Backupper():
             files_total = 0
             for found_file in files:
                 relative_path = found_file.replace(self.target_path + '/', "", 1)
-                relative_path = '/' + relative_path
                 (mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime) = os.stat(found_file)
                 parts = [
                     'path=%s' % relative_path,
@@ -183,24 +187,22 @@ class S4Backupper():
             self.stats['bytes_total'] = bytes_total
             self.stats['files_total'] = files_total
 
-        s3path = '/'.join([
-            self.s3prefix,
-            'logs',
-            self.snapshot_version,
-            'state.txt'
-        ])
-        self._upload_to_s3(s3path, state_file_path)
+        upload_path = '/'.join(['logs', self.snapshot_version, 'state.txt'])
+        self._backup_file(state_file_path, upload_path)
 
         for found_file in files:
-            self._backup_file(found_file)
+            relative_path = found_file.replace(self.target_path + '/', "", 1)
+
+            self._backup_file(found_file, '/'.join(['data', relative_path]))
+            self._auto_log_update()
 
         self.logger.info('Bytes uploaded:%s scanned:%s total:%s' % (self.stats['bytes_uploaded'], self.stats['bytes_scanned'], self.stats['bytes_total']))
         self.logger.info('Files uploaded:%s scanned:%s total:%s' % (self.stats['files_uploaded'], self.stats['files_scanned'], self.stats['files_total']))
 
         time_end = time.time()
 
-        state_file_path = os.path.join(self.log_path, 'summary.txt')
-        with open(state_file_path, 'wt') as f:
+        summary_file_path = os.path.join(self.log_path, 'summary.txt')
+        with open(summary_file_path, 'wt') as f:
             f.write('time_start :%s (%s)\n' % (time.strftime('%Y-%m-%d %H-%M-%S', time.gmtime(time_start)), time_start))
             f.write('time_end   :%s (%s)\n' % (time.strftime('%Y-%m-%d %H-%M-%S', time.gmtime(time_end)), time_end))
             seconds_spent = time_end - time_start
@@ -209,13 +211,8 @@ class S4Backupper():
             f.write('Bytes uploaded:%s scanned:%s total:%s\n' % (self.stats['bytes_uploaded'], self.stats['bytes_scanned'], self.stats['bytes_total']))
             f.write('Files uploaded:%s scanned:%s total:%s\n' % (self.stats['files_uploaded'], self.stats['files_scanned'], self.stats['files_total']))
 
-        s3path = '/'.join([
-            self.s3prefix,
-            'logs',
-            self.snapshot_version,
-            'summary.txt'
-        ])
-        self._upload_to_s3(s3path, state_file_path)
+        upload_path = '/'.join(['logs', self.snapshot_version, 'summary.txt'])
+        self._backup_file(summary_file_path, upload_path)
 
 
 def init():
@@ -264,6 +261,19 @@ def config(args):
         print('%s is set to %s' % (key, value))
         return
 
+    if not args.list and args.keyg:
+        iv_str, key_str = Encryptor.generate_str_keyset(2)
+
+        config_dict['iv'] = iv_str
+        config_dict['key'] = key_str
+
+        with open(config_json_path, 'wt') as f:
+            json.dump(config_dict, f)
+
+        print('key %s' % key_str)
+        print('iv %s' % iv_str)
+        return
+
     for key in sorted(config_dict.keys()):
         print('%s=%s' % (key, config_dict[key]))
 
@@ -293,6 +303,7 @@ def execute_backup(dry_run_flg):
         aws_secret_access_key=aws_secret_access_key,
         s3bucket_name=config_dict['s3bucket'],
         s3prefix=config_dict['s3prefix'],
+        config_dict=config_dict,
         dry_run_flg=dry_run_flg,
     )
     archiver.backup()
@@ -308,6 +319,7 @@ if __name__ == '__main__':
     parser_config = subparsers.add_parser('config', help='list / set current working directory config')
     parser_config.add_argument('-l', '--list', dest='list', action='store_true', help='List')
     parser_config.add_argument('-s', '--set', nargs=2, dest='set', help='Set')
+    parser_config.add_argument('-k', '--key', dest='keyg', action='store_true', help='Generate encryption key')
 
     parser_push = subparsers.add_parser('push', help='execute backup against current working directory')
     parser_push.add_argument('-d', '--dry', dest='dry_run', action='store_true', help='Dry run')
