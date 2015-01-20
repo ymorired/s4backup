@@ -26,6 +26,7 @@ import boto
 from boto.s3.key import Key
 
 from filelister import FileLister
+from util import *
 
 CONFIG_DIR = '.s4backup'
 CONFIG_FILE_NAME = 'config.json'
@@ -40,28 +41,6 @@ IGNORE_DIRS = [
     '.idea',
     CONFIG_DIR
 ]
-
-
-def mkdir_p(path):
-    try:
-        os.makedirs(path)
-    except OSError as exc:  # Python >2.5
-        if exc.errno == errno.EEXIST and os.path.isdir(path):
-            pass
-        else:
-            raise
-
-
-def calc_md5_for_file(file_path, block_size=2**20):
-    md5 = hashlib.md5()
-    with open(file_path) as f:
-        while True:
-            data = f.read(block_size)
-            if not data:
-                break
-            md5.update(data)
-
-    return md5.hexdigest()
 
 
 class S4Backupper():
@@ -145,7 +124,7 @@ class S4Backupper():
         relative_path = '/' + relative_path
 
         file_backp_start_time = time.time()
-        md5sum = calc_md5_for_file(file_path)
+        md5sum = calc_md5_from_filename(file_path)
         md5_end_time = time.time()
         md5_calc_seconds = md5_end_time - file_backp_start_time
 
