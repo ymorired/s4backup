@@ -25,6 +25,7 @@ import argparse
 import boto
 from boto.s3.key import Key
 
+from filelister import FileLister
 
 CONFIG_DIR = '.s4backup'
 CONFIG_FILE_NAME = 'config.json'
@@ -61,51 +62,6 @@ def calc_md5_for_file(file_path, block_size=2**20):
             md5.update(data)
 
     return md5.hexdigest()
-
-
-class FileLister():
-    def __init__(self, target_path, ignore_dirs=None, ignore_filenames=None):
-        abs_path = os.path.abspath(target_path)
-        if not os.path.isdir(abs_path):
-            raise Exception('Invalid target path!')
-
-        self.target_path = abs_path
-
-        ignore_filenames = ignore_filenames or []
-        self.ignore_filenames = ignore_filenames
-        ignore_dirs = ignore_dirs or []
-        self.ignore_dirs = ignore_dirs
-
-    def _is_ignore_dir(self, dir_name):
-        dir_name += '/'
-        relative_path = dir_name.replace(self.target_path, "", 1)
-        for ignore_dir in self.ignore_dirs:
-            if relative_path.startswith('/' + ignore_dir + '/'):
-                return True
-        return False
-
-    def _fild_all_files(self, directory):
-        for root, dirs, files in os.walk(directory):
-            if self._is_ignore_dir(root):
-                continue
-            for file_name in files:
-                # if file_name in self.ignore_filenames:
-                #     if fnmatch.fnmatch(root, '.git/*'):
-                    # continue
-                skip = False
-                for ignore_pattern in self.ignore_filenames:
-                    if fnmatch.fnmatch(file_name, ignore_pattern):
-                        skip = True
-
-                if skip:
-                    continue
-                yield os.path.join(root, file_name)
-
-    def get_file_list(self):
-        files = []
-        for found_file in self._fild_all_files(self.target_path):
-            files.append(found_file)
-        return files
 
 
 class S4Backupper():
@@ -163,7 +119,7 @@ class S4Backupper():
         self.file_lister = FileLister(
             self.target_path,
             ignore_dirs=IGNORE_DIRS,
-            ignore_filenames=IGNORE_FILE_RULES,
+            ignore_file_patterns=IGNORE_FILE_RULES,
         )
         self.update_count = 0
         self.update_time = time.time()
