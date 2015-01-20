@@ -12,12 +12,8 @@ http://opensource.org/licenses/mit-license.php
 
 __author__ = 'mori.yuichiro'
 
-import os
-import errno
 import time
-import fnmatch
 import pprint
-import hashlib
 import logging
 import json
 import argparse
@@ -254,13 +250,8 @@ def config(args):
     with open(config_json_path) as f:
         config_dict = json.load(f)
 
-    if args.list:
-        pprint.pprint(config_dict)
-        return
-
-    if 'set' in args and args.set is not None:
+    if not args.list and 'set' in args and args.set is not None:
         set_values = args.set
-        pprint.pprint(set_values)
         key = set_values[0]
         value = set_values[1]
         if value == '':
@@ -269,7 +260,12 @@ def config(args):
             config_dict[key] = value
         with open(config_json_path, 'wt') as f:
             json.dump(config_dict, f)
+
+        print('%s is set to %s' % (key, value))
         return
+
+    for key in sorted(config_dict.keys()):
+        print('%s=%s' % (key, config_dict[key]))
 
 
 def execute_backup(dry_run_flg):
@@ -321,7 +317,6 @@ if __name__ == '__main__':
     if args.subparser == 'init':
         init()
     elif args.subparser == 'config':
-        pprint.pprint(args)
         config(args)
     else:
         execute_backup(args.dry_run)
