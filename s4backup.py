@@ -2,7 +2,7 @@
 
 r"""
 
-Copyright (c) [year] [fullname]
+Copyright (c) 2015 Yuichiro Mori
 
 This software is released under the MIT License.
 
@@ -25,6 +25,8 @@ import argparse
 import boto
 from boto.s3.key import Key
 
+from filelister import FileLister
+from util import *
 
 CONFIG_DIR = '.s4backup'
 CONFIG_FILE_NAME = 'config.json'
@@ -39,73 +41,6 @@ IGNORE_DIRS = [
     '.idea',
     CONFIG_DIR
 ]
-
-
-def mkdir_p(path):
-    try:
-        os.makedirs(path)
-    except OSError as exc:  # Python >2.5
-        if exc.errno == errno.EEXIST and os.path.isdir(path):
-            pass
-        else:
-            raise
-
-
-def calc_md5_for_file(file_path, block_size=2**20):
-    md5 = hashlib.md5()
-    with open(file_path) as f:
-        while True:
-            data = f.read(block_size)
-            if not data:
-                break
-            md5.update(data)
-
-    return md5.hexdigest()
-
-
-class FileLister():
-    def __init__(self, target_path, ignore_dirs=None, ignore_filenames=None):
-        abs_path = os.path.abspath(target_path)
-        if not os.path.isdir(abs_path):
-            raise Exception('Invalid target path!')
-
-        self.target_path = abs_path
-
-        ignore_filenames = ignore_filenames or []
-        self.ignore_filenames = ignore_filenames
-        ignore_dirs = ignore_dirs or []
-        self.ignore_dirs = ignore_dirs
-
-    def _is_ignore_dir(self, dir_name):
-        dir_name += '/'
-        relative_path = dir_name.replace(self.target_path, "", 1)
-        for ignore_dir in self.ignore_dirs:
-            if relative_path.startswith('/' + ignore_dir + '/'):
-                return True
-        return False
-
-    def _fild_all_files(self, directory):
-        for root, dirs, files in os.walk(directory):
-            if self._is_ignore_dir(root):
-                continue
-            for file_name in files:
-                # if file_name in self.ignore_filenames:
-                #     if fnmatch.fnmatch(root, '.git/*'):
-                    # continue
-                skip = False
-                for ignore_pattern in self.ignore_filenames:
-                    if fnmatch.fnmatch(file_name, ignore_pattern):
-                        skip = True
-
-                if skip:
-                    continue
-                yield os.path.join(root, file_name)
-
-    def get_file_list(self):
-        files = []
-        for found_file in self._fild_all_files(self.target_path):
-            files.append(found_file)
-        return files
 
 
 class S4Backupper():
@@ -163,12 +98,20 @@ class S4Backupper():
         self.file_lister = FileLister(
             self.target_path,
             ignore_dirs=IGNORE_DIRS,
-            ignore_filenames=IGNORE_FILE_RULES,
+            ignore_file_patterns=IGNORE_FILE_RULES,
         )
+        self.update_count = 0
+        self.update_time = time.time()
+
+    def _get_key_from_s3(self, s3path):
+        if self.dry_run_flg:
+            self.logger.warning('get_key disabled s3path:%s' % s3path)
+            return None
+
+        return self.s3bucket.get_key(s3path)
 
     def _upload_to_s3(self, s3path, file_path):
         if self.dry_run_flg:
-            # pass
             self.logger.warning('uploaded disabled s3path:%s' % s3path)
             return
 
@@ -181,7 +124,7 @@ class S4Backupper():
         relative_path = '/' + relative_path
 
         file_backp_start_time = time.time()
-        md5sum = calc_md5_for_file(file_path)
+        md5sum = calc_md5_from_filename(file_path)
         md5_end_time = time.time()
         md5_calc_seconds = md5_end_time - file_backp_start_time
 
@@ -203,9 +146,17 @@ class S4Backupper():
             self.stats['bytes_uploaded'] += size
             self.stats['files_uploaded'] += 1
 
-            self.logger.info('%s/%s uploaded file=%s' % (self.stats['files_scanned'], self.stats['files_total'], relative_path))
+            self.logger.debug('%s/%s uploaded file=%s' % (self.stats['files_scanned'], self.stats['files_total'], relative_path))
         else:
-            self.logger.info('%s/%s skipped file=%s' % (self.stats['files_scanned'], self.stats['files_total'], relative_path))
+            self.logger.debug('%s/%s skipped file=%s' % (self.stats['files_scanned'], self.stats['files_total'], relative_path))
+
+        self._auto_log_update()
+
+    def _auto_log_update(self):
+        self.update_count += 1
+        if self.update_count % 20 == 0:
+            self.logger.info('Bytes uploaded:%s scanned:%s total:%s' % (self.stats['bytes_uploaded'], self.stats['bytes_scanned'], self.stats['bytes_total']))
+            self.logger.info('Files uploaded:%s scanned:%s total:%s' % (self.stats['files_uploaded'], self.stats['files_scanned'], self.stats['files_total']))
 
     def backup(self):
         self.logger.info('Snapshot version:%s' % self.snapshot_version)
@@ -374,7 +325,4 @@ if __name__ == '__main__':
         config(args)
     else:
         execute_backup(args.dry_run)
-
-
-
 
