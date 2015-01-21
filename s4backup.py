@@ -43,22 +43,22 @@ IGNORE_DIRS = [
 
 class S4Backupper():
     def __init__(self, target_path, aws_access_key_id, aws_secret_access_key, s3bucket_name, s3prefix,
-                 config_dict, dry_run_flg=False):
+                 use_encryption=False, key_str=None, iv_str=None, aws_region=None, dry_run_flg=False):
 
         abs_path = os.path.abspath(target_path)
         if not os.path.isdir(abs_path):
             raise Exception('Invalid target path!')
+        self.target_path = abs_path
 
         self.snapshot_version = time.strftime('%Y-%m-%d_%H-%M-%S', time.gmtime(time.time()))
 
+        # *** directoy initialization ***
         log_base_path = os.path.join(abs_path, CONFIG_DIR, 'logs')
         mkdir_p(log_base_path)
         log_path = os.path.join(log_base_path, self.snapshot_version)
         mkdir_p(log_path)
-
         self.log_path = log_path
 
-        self.target_path = abs_path
         self.stats = {
             'bytes_uploaded': 0,
             'bytes_scanned': 0,
@@ -68,16 +68,17 @@ class S4Backupper():
             'files_total': 0,
         }
 
+        # *** AWS S3 Connection ***
         self.s3conn = boto.s3.connect_to_region(
-            'us-east-1',
+            aws_region or 'us-east-1',
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
         )
         self.s3bucket = self.s3conn.get_bucket(s3bucket_name)
         self.s3prefix = str(s3prefix)  # get lid of unicode
-
         self.dry_run_flg = dry_run_flg
 
+        # *** Logger ***
         # Logger to show progress
         logger = logging.getLogger('S3ArchiverStdout')
         logger.setLevel(logging.DEBUG)
@@ -90,7 +91,6 @@ class S4Backupper():
         h2.setLevel(logging.DEBUG)
         h2.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s"))
         logger.addHandler(h2)
-
         self.logger = logger
 
         self.file_lister = FileLister(
@@ -99,11 +99,12 @@ class S4Backupper():
             ignore_file_patterns=IGNORE_FILE_RULES,
         )
         self.update_count = 0
-        self.update_time = time.time()
 
-        import binascii
-        self.encryptor = Encryptor(binascii.a2b_hex(config_dict['key']), binascii.a2b_hex(config_dict['iv']))
-        self.encryption_flg = True
+        self.encryption_flg = use_encryption
+        if self.encryption_flg:
+            self.encryptor = Encryptor.initialize_by_hex(key_str, iv_str)
+        else:
+            self.encryptor = None
 
     def _backup_file(self, file_path, upload_path):
 
@@ -142,9 +143,12 @@ class S4Backupper():
                 if fkey is None or fkey.etag != '"%s"' % md5sum:
                     # file does not exist or modified
 
-                    obj_key = Key(self.s3bucket)
-                    obj_key.key = s3path
-                    obj_key.set_contents_from_file(out_file_p)
+                    if self.dry_run_flg:
+                        self.logger.warn('Upload skipped due to dry run flg')
+                    else:
+                        obj_key = Key(self.s3bucket)
+                        obj_key.key = s3path
+                        obj_key.set_contents_from_file(out_file_p)
 
                     self.stats['bytes_uploaded'] += encrypted_size
                     self.stats['files_uploaded'] += 1
@@ -262,8 +266,12 @@ def config(args):
         return
 
     if not args.list and args.keyg:
-        iv_str, key_str = Encryptor.generate_str_keyset(2)
+        if config_dict.get('encryption', False):
+            raise Exception('Encryption is already turned on!')
 
+        iv_str, key_str = Encryptor.generate_str_keyset(1)
+
+        config_dict['encryption'] = 'true'
         config_dict['iv'] = iv_str
         config_dict['key'] = key_str
 
@@ -285,28 +293,35 @@ def execute_backup(dry_run_flg):
     with open(config_json_path) as f:
         config_dict = json.load(f)
 
-    aws_access_key_id = ''
     if 'aws_access_key_id' in config_dict:
         aws_access_key_id = config_dict['aws_access_key_id']
     else:
         aws_access_key_id = os.environ.get('AWS_ACCESS_KEY_ID')
 
-    aws_secret_access_key = ''
     if 'aws_secret_access_key' in config_dict:
         aws_secret_access_key = config_dict['aws_secret_access_key']
     else:
         aws_secret_access_key = os.environ.get('AWS_SECRET_ACCESS_KEY')
 
-    archiver = S4Backupper(
+    encryption_value = config_dict.get('encryption', None)
+    if encryption_value and encryption_value.lower() == 'true':
+        encryption_flg = True
+    else:
+        encryption_flg = False
+
+    backupper = S4Backupper(
         target_path=os.getcwd(),
         aws_access_key_id=aws_access_key_id,
         aws_secret_access_key=aws_secret_access_key,
+        aws_region=config_dict.get('aws_region', None),
         s3bucket_name=config_dict['s3bucket'],
         s3prefix=config_dict['s3prefix'],
-        config_dict=config_dict,
+        use_encryption=encryption_flg,
+        key_str=config_dict.get('key', ''),
+        iv_str=config_dict.get('iv', ''),
         dry_run_flg=dry_run_flg,
     )
-    archiver.backup()
+    backupper.backup()
 
 
 if __name__ == '__main__':

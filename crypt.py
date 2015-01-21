@@ -31,6 +31,10 @@ class Encryptor():
         key = Random.new().read(AES.block_size * length)
         return key
 
+    @classmethod
+    def initialize_by_hex(cls, key_str, iv_str):
+        return cls(binascii.a2b_hex(key_str), binascii.a2b_hex(iv_str))
+
     def encrypt_file(self, in_file_p, out_file_p):
 
         crypt = AES.new(self.encryption_key, AES.MODE_CBC, self.initial_vector)
