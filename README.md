@@ -9,6 +9,17 @@ This project is intended to create a tool that backs up local file into Amazon S
 - Backup entire photo folder to Amazon S3 (and archive it using Amacon Glacier).
 - Backup entire music folder to Amazon S3 (and archive it using Amacon Glacier).
 
+## Using Docker
+```
+    sudo docker build -t dev/s4backup .
+    sudo docker run -it -v /var/target_dir:/var/data dev/s4backup -h
+```
+
+```
+function s4backup() {
+    sudo docker run -it -v $PWD:/var/data ymorired/py "$@"
+}
+```
 
 ## License (MIT)
 
