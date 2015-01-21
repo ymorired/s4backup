@@ -68,6 +68,8 @@ class S4Backupper():
             'files_total': 0,
         }
 
+        self.s3keys = {}
+
         # *** AWS S3 Connection ***
         self.s3conn = boto.s3.connect_to_region(
             aws_region or 'us-east-1',
@@ -139,23 +141,31 @@ class S4Backupper():
                 self.stats['bytes_scanned'] += size
 
                 s3path = '/'.join([self.s3prefix, upload_path])
+                if s3path in self.s3keys:
+                    cached_key = self.s3keys[s3path]
+                    if cached_key.etag == '"%s"' % md5sum:
+                        self.logger.debug('%s/%s skipped file=%s' % (self.stats['files_scanned'], self.stats['files_total'], upload_path))
+                        return
+
                 fkey = self.s3bucket.get_key(s3path)
-                if fkey is None or fkey.etag != '"%s"' % md5sum:
-                    # file does not exist or modified
+                if fkey and fkey.etag == '"%s"' % md5sum:
+                    self.logger.debug('%s/%s checked and skipped file=%s' % (self.stats['files_scanned'], self.stats['files_total'], upload_path))
+                    return
 
-                    if self.dry_run_flg:
-                        self.logger.warn('Upload skipped due to dry run flg')
-                    else:
-                        obj_key = Key(self.s3bucket)
-                        obj_key.key = s3path
-                        obj_key.set_contents_from_file(out_file_p)
+                # file does not exist or modified
+                if self.dry_run_flg:
+                    self.logger.warn('Upload skipped due to dry run flg file:%s' % upload_path)
+                    return
 
-                    self.stats['bytes_uploaded'] += encrypted_size
-                    self.stats['files_uploaded'] += 1
+                obj_key = Key(self.s3bucket)
+                obj_key.key = s3path
+                obj_key.set_metadata('original_size', str(size))
+                obj_key.set_contents_from_file(out_file_p, encrypt_key=True)
 
-                    self.logger.debug('%s/%s uploaded file=%s' % (self.stats['files_scanned'], self.stats['files_total'], upload_path))
-                else:
-                    self.logger.debug('%s/%s skipped file=%s' % (self.stats['files_scanned'], self.stats['files_total'], upload_path))
+                self.stats['bytes_uploaded'] += size
+                self.stats['files_uploaded'] += 1
+
+                self.logger.debug('%s/%s uploaded file=%s' % (self.stats['files_scanned'], self.stats['files_total'], upload_path))
 
     def _auto_log_update(self):
         self.update_count += 1
@@ -166,6 +176,14 @@ class S4Backupper():
     def backup(self):
         self.logger.info('Snapshot version:%s' % self.snapshot_version)
         time_start = time.time()
+
+        s3path = '/'.join([self.s3prefix, 'data'])
+        key_num = 0
+        for fkey in self.s3bucket.list(s3path):
+            self.s3keys[fkey.key] = fkey
+            key_num += 1
+
+        self.logger.info('Cached keys:%s' % key_num)
 
         files = self.file_lister.get_file_list()
 
