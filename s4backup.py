@@ -45,7 +45,8 @@ IGNORE_DIRS = [
 
 class S4Backupper():
     def __init__(self, target_path, aws_access_key_id, aws_secret_access_key, s3bucket_name, s3prefix,
-                 use_encryption=False, key_str=None, iv_str=None, aws_region=None, dry_run_flg=False):
+                 use_hash_filename=False, use_encryption=False, key_str=None, iv_str=None, aws_region=None,
+                 dry_run_flg=False):
 
         abs_path = os.path.abspath(target_path)
         if not os.path.isdir(abs_path):
@@ -103,6 +104,8 @@ class S4Backupper():
             ignore_file_patterns=IGNORE_FILE_RULES,
         )
         self.update_count = 0
+
+        self.hash_filename_flg = use_hash_filename
 
         self.encryption_flg = use_encryption
         if self.encryption_flg:
@@ -218,7 +221,8 @@ class S4Backupper():
 
         for found_file in files:
             relative_path = found_file.replace(self.target_path + '/', "", 1)
-
+            if self.hash_filename_flg:
+                relative_path = calc_sha1_from_str(relative_path)
             self._backup_file(found_file, '/'.join(['data', relative_path]))
             self._auto_log_update()
 
@@ -338,6 +342,12 @@ def execute_backup(dry_run_flg):
     else:
         encryption_flg = False
 
+    hash_filename = config_dict.get('hash_filename', None)
+    if hash_filename and hash_filename.lower() == 'true':
+        hash_filename_flg = True
+    else:
+        hash_filename_flg = False
+
     backupper = S4Backupper(
         target_path=os.getcwd(),
         aws_access_key_id=aws_access_key_id,
@@ -345,6 +355,7 @@ def execute_backup(dry_run_flg):
         aws_region=config_dict.get('aws_region', None),
         s3bucket_name=config_dict['s3bucket'],
         s3prefix=config_dict['s3prefix'],
+        use_hash_filename=hash_filename_flg,
         use_encryption=encryption_flg,
         key_str=config_dict.get('key', ''),
         iv_str=config_dict.get('iv', ''),

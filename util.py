@@ -30,3 +30,9 @@ def calc_md5_from_file(fp, block_size=2**20):
 
     return md5.hexdigest()
 
+
+def calc_sha1_from_str(input_str):
+    h = hashlib.sha1()
+    h.update(input_str)
+    return h.hexdigest()
+
