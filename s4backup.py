@@ -28,6 +28,8 @@ from util import *
 
 CONFIG_DIR = '.s4backup'
 CONFIG_FILE_NAME = 'config.json'
+IGNORE_FILE_NAME = 'file_ignore'
+IGNORE_DIR_NAME = 'dir_ignore'
 
 IGNORE_FILE_RULES = [
     '.DS_Store',
@@ -162,16 +164,18 @@ class S4Backupper():
                 obj_key.set_metadata('original_size', str(size))
                 obj_key.set_contents_from_file(out_file_p, encrypt_key=True)
 
-                self.stats['bytes_uploaded'] += size
                 self.stats['files_uploaded'] += 1
+                self.stats['bytes_uploaded'] += size
 
                 self.logger.debug('%s/%s uploaded file=%s' % (self.stats['files_scanned'], self.stats['files_total'], upload_path))
 
     def _auto_log_update(self):
         self.update_count += 1
-        if self.update_count % 20 == 0:
-            self.logger.info('Bytes uploaded:%s scanned:%s total:%s' % (self.stats['bytes_uploaded'], self.stats['bytes_scanned'], self.stats['bytes_total']))
-            self.logger.info('Files uploaded:%s scanned:%s total:%s' % (self.stats['files_uploaded'], self.stats['files_scanned'], self.stats['files_total']))
+        if self.update_count % 20 != 0:
+            return
+
+        self.logger.info('Bytes uploaded:%s scanned:%s total:%s' % (self.stats['bytes_uploaded'], self.stats['bytes_scanned'], self.stats['bytes_total']))
+        self.logger.info('Files uploaded:%s scanned:%s total:%s' % (self.stats['files_uploaded'], self.stats['files_scanned'], self.stats['files_total']))
 
     def backup(self):
         self.logger.info('Snapshot version:%s' % self.snapshot_version)
@@ -240,9 +244,8 @@ class S4Backupper():
 def init():
     config_path = os.path.join(os.getcwd(), CONFIG_DIR)
     config_json_path = os.path.join(config_path, CONFIG_FILE_NAME)
-
-    if os.path.isdir(config_path) and os.path.isfile(config_json_path):
-        raise Exception('Current working directory is already initialized!')
+    file_ignore_path = os.path.join(config_path, IGNORE_FILE_NAME)
+    dir_ignore_path = os.path.join(config_path, IGNORE_DIR_NAME)
 
     if not os.path.isdir(config_path):
         os.mkdir(config_path)
@@ -250,6 +253,14 @@ def init():
     if not os.path.isfile(config_json_path):
         with open(config_json_path, 'wt') as f:
             json.dump({}, f)
+
+    if not os.path.isfile(file_ignore_path):
+        with open(file_ignore_path, 'wt') as f:
+            f.write('')
+
+    if not os.path.isfile(dir_ignore_path):
+        with open(dir_ignore_path, 'wt') as f:
+            f.write('')
 
     print('Initialization finished!')
 
@@ -262,15 +273,15 @@ def _assure_initialized():
         raise Exception('Current working directory is not initialized!')
 
 
-def config(args):
+def config(args_obj):
     _assure_initialized()
 
     config_json_path = os.path.join(os.getcwd(), CONFIG_DIR, CONFIG_FILE_NAME)
     with open(config_json_path) as f:
         config_dict = json.load(f)
 
-    if not args.list and 'set' in args and args.set is not None:
-        set_values = args.set
+    if not args_obj.list and 'set' in args_obj and args_obj.set is not None:
+        set_values = args_obj.set
         key = set_values[0]
         value = set_values[1]
         if value == '':
@@ -283,7 +294,7 @@ def config(args):
         print('%s is set to %s' % (key, value))
         return
 
-    if not args.list and args.keyg:
+    if not args_obj.list and args_obj.keyg:
         if config_dict.get('encryption', False):
             raise Exception('Encryption is already turned on!')
 
@@ -357,12 +368,12 @@ if __name__ == '__main__':
     parser_push = subparsers.add_parser('push', help='execute backup against current working directory')
     parser_push.add_argument('-d', '--dry', dest='dry_run', action='store_true', help='Dry run')
 
-    args = parser.parse_args()
+    parsed_args = parser.parse_args()
 
-    if args.subparser == 'init':
+    if parsed_args.subparser == 'init':
         init()
-    elif args.subparser == 'config':
-        config(args)
+    elif parsed_args.subparser == 'config':
+        config(parsed_args)
     else:
-        execute_backup(args.dry_run)
+        execute_backup(parsed_args.dry_run)
 
