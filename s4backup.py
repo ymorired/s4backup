@@ -187,7 +187,7 @@ class S4Backupper():
         s3path = '/'.join([self.s3prefix, 'data'])
         key_num = 0
         for fkey in self.s3bucket.list(s3path):
-            self.s3keys[fkey.key] = fkey
+            self.s3keys[fkey.key.encode('utf-8')] = fkey
             key_num += 1
 
         self.logger.info('Cached keys:%s' % key_num)
