@@ -24,12 +24,14 @@ from boto.s3.key import Key
 
 from crypt import Encryptor
 from filelister import FileLister
+from flock import SimpleFileLock
 from util import *
 
 CONFIG_DIR = '.s4backup'
 CONFIG_FILE_NAME = 'config.json'
 IGNORE_FILE_NAME = 'file_ignore'
 IGNORE_DIR_NAME = 'dir_ignore'
+LOCK_FILE_NAME = 'lock'
 
 IGNORE_FILE_RULES = [
     '.DS_Store',
@@ -180,20 +182,7 @@ class S4Backupper():
         self.logger.info('Bytes uploaded:%s scanned:%s total:%s' % (self.stats['bytes_uploaded'], self.stats['bytes_scanned'], self.stats['bytes_total']))
         self.logger.info('Files uploaded:%s scanned:%s total:%s' % (self.stats['files_uploaded'], self.stats['files_scanned'], self.stats['files_total']))
 
-    def backup(self):
-        self.logger.info('Snapshot version:%s' % self.snapshot_version)
-        time_start = time.time()
-
-        s3path = '/'.join([self.s3prefix, 'data'])
-        key_num = 0
-        for fkey in self.s3bucket.list(s3path):
-            self.s3keys[fkey.key.encode('utf-8')] = fkey
-            key_num += 1
-
-        self.logger.info('Cached keys:%s' % key_num)
-
-        files = self.file_lister.get_file_list()
-
+    def _save_directory_state(self, files):
         state_file_path = os.path.join(self.log_path, 'state.txt')
         with open(state_file_path, 'wt') as f:
             bytes_total = 0
@@ -219,6 +208,29 @@ class S4Backupper():
         upload_path = '/'.join(['logs', self.snapshot_version, 'state.txt'])
         self._backup_file(state_file_path, upload_path)
 
+    def execute_backup(self):
+
+        locker = SimpleFileLock(os.path.join(self.target_path, CONFIG_DIR, LOCK_FILE_NAME))
+
+        if not locker.aquire_lock():
+            self.logger.error('Cannot get lock!')
+            return
+
+        self.logger.info('Snapshot version:%s' % self.snapshot_version)
+        time_start = time.time()
+
+        s3path = '/'.join([self.s3prefix, 'data'])
+        key_num = 0
+        for fkey in self.s3bucket.list(s3path):
+            self.s3keys[fkey.key.encode('utf-8')] = fkey
+            key_num += 1
+
+        self.logger.info('Cached keys:%s' % key_num)
+
+        files = self.file_lister.get_file_list()
+
+        self._save_directory_state(files)
+
         for found_file in files:
             relative_path = found_file.replace(self.target_path + '/', "", 1)
             if self.hash_filename_flg:
@@ -243,6 +255,8 @@ class S4Backupper():
 
         upload_path = '/'.join(['logs', self.snapshot_version, 'summary.txt'])
         self._backup_file(summary_file_path, upload_path)
+
+        locker.release()
 
 
 def init():
@@ -361,7 +375,7 @@ def execute_backup(dry_run_flg):
         iv_str=config_dict.get('iv', ''),
         dry_run_flg=dry_run_flg,
     )
-    backupper.backup()
+    backupper.execute_backup()
 
 
 if __name__ == '__main__':
