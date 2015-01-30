@@ -185,8 +185,27 @@ class S4Backupper():
         if self.update_count % 20 != 0:
             return
 
-        self.logger.info('Bytes uploaded:%s scanned:%s total:%s' % (self.stats['bytes_uploaded'], self.stats['bytes_scanned'], self.stats['bytes_total']))
-        self.logger.info('Files uploaded:%s scanned:%s total:%s' % (self.stats['files_uploaded'], self.stats['files_scanned'], self.stats['files_total']))
+        bytes_total = self.stats['bytes_total']
+        bytes_uploaded = self.stats['bytes_uploaded']
+        bytes_scanned = self.stats['bytes_scanned']
+        self.logger.info(
+            'Bytes uploaded:{}({:.2f}%) '.format(humanize_bytes(bytes_uploaded), percentize(bytes_uploaded, bytes_total)) +
+            'scanned:{}({:.2f}%) '.format(humanize_bytes(bytes_scanned), percentize(bytes_scanned, bytes_total)) +
+            'total:{} '.format(humanize_bytes(self.stats['bytes_total'])) +
+            ''
+        )
+
+        files_total = self.stats['files_total']
+        if files_total == 0:
+            files_total = 1
+        files_uploaded = self.stats['files_uploaded']
+        files_scanned = self.stats['files_scanned']
+        self.logger.info(
+            'Files uploaded:{}({:.2f}%) '.format(files_uploaded, percentize(files_uploaded, files_total)) +
+            'scanned:{}({:.2f}%) '.format(files_scanned, percentize(files_scanned, files_total)) +
+            'total:{} '.format(files_total) +
+            ''
+        )
 
     def _save_directory_state(self, files):
         state_file_path = os.path.join(self.log_path, 'state.txt')
