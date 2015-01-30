@@ -140,7 +140,8 @@ class S4Backupper():
                 out_file_p.seek(0, os.SEEK_SET)
 
                 self.logger.debug(
-                    'file=%s md5=%s size=%s ' % (upload_path, md5sum, size) +
+                    'file=%s ' % (file_path) +
+                    'path=%s md5=%s size=%s ' % (upload_path, md5sum, size) +
                     'enc_size=%s enc_sec=%s md5_sec=%s ' % (encrypted_size, encryption_seconds, md5_seconds)
                 )
 
@@ -208,14 +209,7 @@ class S4Backupper():
         upload_path = '/'.join(['logs', self.snapshot_version, 'state.txt'])
         self._backup_file(state_file_path, upload_path)
 
-    def execute_backup(self):
-
-        locker = SimpleFileLock(os.path.join(self.target_path, CONFIG_DIR, LOCK_FILE_NAME))
-
-        if not locker.aquire_lock():
-            self.logger.error('Cannot get lock!')
-            return
-
+    def _execute_backup(self):
         self.logger.info('Snapshot version:%s' % self.snapshot_version)
         time_start = time.time()
 
@@ -256,7 +250,21 @@ class S4Backupper():
         upload_path = '/'.join(['logs', self.snapshot_version, 'summary.txt'])
         self._backup_file(summary_file_path, upload_path)
 
-        locker.release()
+    def execute_backup(self):
+
+        locker = SimpleFileLock(os.path.join(self.target_path, CONFIG_DIR, LOCK_FILE_NAME))
+
+        if not locker.aquire_lock():
+            self.logger.error('Cannot get lock!')
+            return
+
+        try:
+            self._execute_backup()
+        except Exception as e:
+            self.logger.exception(e)
+            raise e
+        finally:
+            locker.release()
 
 
 def init():
