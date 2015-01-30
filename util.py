@@ -36,3 +36,25 @@ def calc_sha1_from_str(input_str):
     h.update(input_str)
     return h.hexdigest()
 
+
+def humanize_bytes(bytes):
+    if bytes < 10000:
+        return '{:} B'.format(bytes)
+
+    kibytes = float(bytes) / 1024.0
+    if kibytes < 100.0:
+        return '{:.2f} KiB'.format(kibytes)
+    if kibytes < 10000.0:
+        return '{:.1f} KiB'.format(kibytes)
+
+    mibytes = float(kibytes) / 1024.0
+    if mibytes < 100.0:
+        return '{:.2f} MiB'.format(mibytes)
+    if mibytes < 10000.0:
+        return '{:.1f} MiB'.format(mibytes)
+
+    gibytes = float(mibytes) / 1024.0
+    if gibytes < 100.0:
+        return '{:.2f} GiB'.format(gibytes)
+    return '{:.1f} GiB'.format(gibytes)
+
