@@ -139,11 +139,16 @@ class S4Backupper():
                 md5_seconds = time.time() - md5_start_time
                 out_file_p.seek(0, os.SEEK_SET)
 
-                self.logger.debug(
-                    'file=%s ' % (file_path) +
-                    'path=%s md5=%s size=%s ' % (upload_path, md5sum, size) +
-                    'enc_size=%s enc_sec=%s md5_sec=%s ' % (encrypted_size, encryption_seconds, md5_seconds)
-                )
+                log_parts = [
+                    'file=%s' % file_path,
+                    'path=%s' % upload_path,
+                    'md5=%s' % md5sum,
+                    'size=%s' % size,
+                    'enc_size=%s' % encrypted_size,
+                    'enc_sec={:.3f}'.format(encryption_seconds),
+                    'md5_sec={:.3f}'.format(md5_seconds),
+                ]
+                self.logger.debug(' '.join(log_parts))
 
                 self.stats['files_scanned'] += 1
                 self.stats['bytes_scanned'] += size
@@ -333,6 +338,7 @@ def config(args_obj):
         with open(config_json_path, 'wt') as f:
             json.dump(config_dict, f)
 
+        print('encryption is turned on')
         print('key %s' % key_str)
         print('iv %s' % iv_str)
         return
