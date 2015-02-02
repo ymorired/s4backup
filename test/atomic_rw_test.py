@@ -2,8 +2,10 @@
 
 __author__ = 'yuichi'
 
-from atomic_rw import AtomicRWer
+import unittest
 import json
+
+from atomic_rw import AtomicRWer
 
 
 class FileListerTest(unittest.TestCase):
@@ -23,7 +25,7 @@ class FileListerTest(unittest.TestCase):
             'num': 1,
         }))
 
-        rwer.close()3
+        rwer.close_for_write()
 
 if __name__ == '__main__':
     unittest.main()
