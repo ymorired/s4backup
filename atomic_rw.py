@@ -18,5 +18,13 @@ class AtomicRWer(object):
         self.fd = open(self.file_path, 'ab')
 
     def write(self, record):
+        if self.fd is None:
+            raise Exception('File descriptor is not open!')
+
         checksum = '{:8x}'.format(zlib.crc32(record)).encode()
         self.fd.write(record + b' ' + checksum + b'\n')
+
+    def close_for_write(self):
+        self.fd.close()
+        self.fd = None
+
