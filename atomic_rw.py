@@ -21,7 +21,7 @@ class AtomicRWer(object):
         if self.fd is None:
             raise Exception('File descriptor is not open!')
 
-        checksum = '{:8x}'.format(zlib.crc32(record)).encode('utf-8')
+        checksum = '{:8x}'.format(zlib.crc32(record)).encode('utf8')
         self.fd.write(record + b' ' + checksum + b'\n')
 
     def close_for_write(self):
@@ -38,7 +38,7 @@ class AtomicRWer(object):
         ret_lines = []
         for line in self.r_fd:
             record, checksum = line.strip().rsplit(b' ', 1)
-            if checksum.decode() == '{:8x}'.format(zlib.crc32(record)):
+            if checksum.decode('utf8') == '{:8x}'.format(zlib.crc32(record)).encode('utf8'):
                 ret_lines.append(record.decode('utf8'))
             else:
                 print('checksum error for record {}'.format(record))
