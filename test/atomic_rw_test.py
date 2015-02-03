@@ -29,14 +29,16 @@ class FileListerTest(unittest.TestCase):
 
         rwer.close_for_write()
 
-        rwer.open_for_read()
+        # rwer.open_for_read()
 
-        for line in rwer.read():
+        for line in rwer.yield_read():
+            #
+            # for line in rwer.read():
             import pprint
             pprint.pprint(json.loads(line))
             # print line
 
-        rwer.close_for_read()
+        # rwer.close_for_read()
 
 
 if __name__ == '__main__':

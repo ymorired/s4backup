@@ -28,6 +28,14 @@ class AtomicRWer(object):
         self.fd.close()
         self.fd = None
 
+    def yield_read(self):
+
+        with open(self.file_path, 'rb') as r_fd:
+            for line in r_fd:
+                record, checksum = line.strip().rsplit(b' ', 1)
+                if checksum.decode('utf8') == '{:8x}'.format(zlib.crc32(record)).encode('utf8'):
+                    yield record.decode('utf8')
+
     def open_for_read(self):
         self.r_fd = open(self.file_path, 'rb')
 
