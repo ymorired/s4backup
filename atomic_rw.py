@@ -3,6 +3,7 @@
 __author__ = 'yuichi'
 
 import os
+import json
 import zlib
 
 
@@ -11,49 +12,40 @@ class AtomicRWer(object):
     def __init__(self, file_path):
 
         self.file_path = os.path.abspath(file_path)
-        self.fd = None
-        self.r_fd = None
+        self.w_fd = None
 
-    def open_for_write(self):
-        self.fd = open(self.file_path, 'ab')
+    def prepare_write(self):
+        self.w_fd = open(self.file_path, 'ab')
 
-    def write(self, record):
-        if self.fd is None:
+    def write_dict(self, record):
+        if self.w_fd is None:
             raise Exception('File descriptor is not open!')
 
-        checksum = '{:8x}'.format(zlib.crc32(record)).encode('utf8')
-        self.fd.write(record + b' ' + checksum + b'\n')
+        if not isinstance(record, dict):
+            raise Exception('Input must be dictionary!')
 
-    def close_for_write(self):
-        self.fd.close()
-        self.fd = None
+        output_string = json.dumps(record, ensure_ascii=False).encode('utf8')
+        checksum = '{:8x}'.format(zlib.crc32(output_string)).encode('utf8')
 
-    def yield_read(self):
+        self.w_fd.write(output_string + b' ' + checksum + b'\n')
+
+    def finish_write(self):
+        self.w_fd.close()
+        self.w_fd = None
+
+    def open_and_read(self):
+        if not os.path.isfile(self.file_path):
+            return
 
         with open(self.file_path, 'rb') as r_fd:
             for line in r_fd:
                 record, checksum = line.strip().rsplit(b' ', 1)
                 if checksum.decode('utf8') == '{:8x}'.format(zlib.crc32(record)).encode('utf8'):
-                    yield record.decode('utf8')
-
-    def open_for_read(self):
-        self.r_fd = open(self.file_path, 'rb')
-
-    def read(self):
-        if self.r_fd is None:
-            raise Exception('File descriptor is not open!')
-
-        ret_lines = []
-        for line in self.r_fd:
-            record, checksum = line.strip().rsplit(b' ', 1)
-            if checksum.decode('utf8') == '{:8x}'.format(zlib.crc32(record)).encode('utf8'):
-                ret_lines.append(record.decode('utf8'))
-            else:
-                print('checksum error for record {}'.format(record))
-
-        return ret_lines
-
-    def close_for_read(self):
-        self.r_fd.close()
-        self.r_fd = None
-
+                    try:
+                        val = json.loads(record.decode('utf8'))
+                        yield val
+                    except ValueError as e:
+                        pass
+                else:
+                    # checksum error
+                    pass

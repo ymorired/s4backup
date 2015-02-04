@@ -25,6 +25,7 @@ from boto.s3.key import Key
 from crypt import Encryptor
 from filelister import FileLister
 from flock import SimpleFileLock
+from atomic_rw import AtomicRWer
 from util import *
 
 CONFIG_DIR = '.s4backup'
@@ -107,6 +108,10 @@ class S4Backupper():
         )
         self.update_count = 0
 
+        state_path = os.path.join(abs_path, CONFIG_DIR, 'state.txt')
+        self.state_writer = AtomicRWer(state_path)
+        self.prev_state = {}
+
         self.hash_filename_flg = use_hash_filename
 
         self.encryption_flg = use_encryption
@@ -117,12 +122,20 @@ class S4Backupper():
 
     def _backup_file(self, file_path, upload_path):
 
+        unicode_file_path = file_path.decode('utf8')
+
+        (mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime) = os.stat(file_path)
+
+        if unicode_file_path in self.prev_state:
+            prev_file_state = self.prev_state[unicode_file_path]
+
+            if size == prev_file_state['size'] and \
+                    mtime == prev_file_state['mtime']:
+                self.logger.debug('File is not modified. Skipping:%s, %s' % (file_path, upload_path))
+                return
+
         with tempfile.TemporaryFile() as out_file_p:
             with open(file_path, 'rb') as in_file_p:
-
-                file_backp_start_time = time.time()
-
-                (mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime) = os.stat(file_path)
 
                 encryption_seconds = 0
                 encrypted_size = 0
@@ -138,6 +151,14 @@ class S4Backupper():
                 md5sum = calc_md5_from_file(out_file_p)
                 md5_seconds = time.time() - md5_start_time
                 out_file_p.seek(0, os.SEEK_SET)
+
+                file_info = {
+                    'size': size,
+                    'mtime': mtime,
+                    'enc_size': encrypted_size,
+                    'file_path': unicode_file_path,
+                    'upload_path': upload_path.decode('utf8'),
+                }
 
                 log_parts = [
                     'file=%s' % file_path,
@@ -158,11 +179,13 @@ class S4Backupper():
                     cached_key = self.s3keys[s3path]
                     if cached_key.etag == '"%s"' % md5sum:
                         self.logger.debug('%s/%s skipped file=%s' % (self.stats['files_scanned'], self.stats['files_total'], upload_path))
+                        self.state_writer.write_dict(file_info)
                         return
 
                 fkey = self.s3bucket.get_key(s3path)
                 if fkey and fkey.etag == '"%s"' % md5sum:
                     self.logger.debug('%s/%s checked and skipped file=%s' % (self.stats['files_scanned'], self.stats['files_total'], upload_path))
+                    self.state_writer.write_dict(file_info)
                     return
 
                 # file does not exist or modified
@@ -174,6 +197,8 @@ class S4Backupper():
                 obj_key.key = s3path
                 obj_key.set_metadata('original_size', str(size))
                 obj_key.set_contents_from_file(out_file_p, encrypt_key=True)
+
+                self.state_writer.write_dict(file_info)
 
                 self.stats['files_uploaded'] += 1
                 self.stats['bytes_uploaded'] += size
@@ -233,9 +258,20 @@ class S4Backupper():
         upload_path = '/'.join(['logs', self.snapshot_version, 'state.txt'])
         self._backup_file(state_file_path, upload_path)
 
+    def _load_prev_state(self):
+        prev_state = {}
+        for rec in self.state_writer.open_and_read():
+            key = rec['file_path']
+            prev_state[key] = rec
+
+        self.prev_state = prev_state
+
     def _execute_backup(self):
         self.logger.info('Snapshot version:%s' % self.snapshot_version)
         time_start = time.time()
+
+        self._load_prev_state()
+        self.state_writer.prepare_write()
 
         s3path = '/'.join([self.s3prefix, 'data'])
         key_num = 0

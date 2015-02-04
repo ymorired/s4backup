@@ -4,8 +4,14 @@ __author__ = 'yuichi'
 
 import unittest
 import json
+import os
+import pprint
 
 from atomic_rw import AtomicRWer
+
+
+BASE_TESTFILE_DIR = os.path.join(os.getcwd(), 'test', 'test_data_tmp')
+TEST_FILE = os.path.join(BASE_TESTFILE_DIR, 'rw_test.txt')
 
 
 class FileListerTest(unittest.TestCase):
@@ -17,28 +23,33 @@ class FileListerTest(unittest.TestCase):
         pass
 
     def test_atomic_write(self):
-        rwer = AtomicRWer('test/rw_test.txt')
 
-        rwer.open_for_write()
-        rwer.write(json.dumps({
+        if os.path.isfile(TEST_FILE):
+            os.unlink(TEST_FILE)
+
+        rwer = AtomicRWer(TEST_FILE)
+
+        rwer.prepare_write()
+        rwer.write_dict({
             'test': 'testtttt!',
             'num': 1,
             # 'bin': '日本語',
             'unic': u'ユニコード',
-        }, ensure_ascii=False).encode('utf8'))
+        })
 
-        rwer.close_for_write()
+        rwer.finish_write()
 
-        # rwer.open_for_read()
+        for obj in rwer.open_and_read():
+            pprint.pprint(obj)
 
-        for line in rwer.yield_read():
-            #
-            # for line in rwer.read():
-            import pprint
-            pprint.pprint(json.loads(line))
-            # print line
+    def test_empty_file(self):
 
-        # rwer.close_for_read()
+        if os.path.isfile(TEST_FILE):
+            os.unlink(TEST_FILE)
+
+        rwer = AtomicRWer(TEST_FILE)
+        for obj in rwer.open_and_read():
+            pprint.pprint(obj)
 
 
 if __name__ == '__main__':
