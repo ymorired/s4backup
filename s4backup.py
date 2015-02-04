@@ -72,6 +72,8 @@ class S4Backupper():
             'files_scanned': 0,
             'bytes_total': 0,
             'files_total': 0,
+            'bytes_processed': 0,
+            'files_processed': 0,
         }
 
         self.s3keys = {}
@@ -134,33 +136,82 @@ class S4Backupper():
 
         return True
 
+    def _encrypt_file(self, in_file_p, out_file_p):
+
+        encryption_start_time = time.time()
+        self.encryptor.encrypt_file(in_file_p, out_file_p)
+        encryption_seconds = time.time() - encryption_start_time
+        encrypted_size = out_file_p.tell()
+        in_file_p.seek(0, os.SEEK_SET)
+        out_file_p.seek(0, os.SEEK_SET)
+
+        return encrypted_size, encryption_seconds
+
+    def _upload_file(self, upload_path, size, target_file_p):
+
+        md5_seconds = 0
+        upload_seconds = 0
+
+        md5_start_time = time.time()
+        md5sum = calc_md5_from_file(target_file_p)
+        md5_seconds = time.time() - md5_start_time
+        target_file_p.seek(0, os.SEEK_SET)
+
+        s3path = '/'.join([self.s3prefix, upload_path])
+        if s3path in self.s3keys:
+            cached_key = self.s3keys[s3path]
+            if cached_key.etag == '"%s"' % md5sum:
+                self.logger.warn('Upload skipped using cached key %s ' % upload_path)
+                return md5_seconds, upload_seconds
+
+        fkey = self.s3bucket.get_key(s3path)
+        if fkey and fkey.etag == '"%s"' % md5sum:
+            self.logger.warn('%s skipped using remote key' % upload_path)
+            return md5_seconds, upload_seconds
+
+        # file does not exist on s3 or modified from s3 version
+        if self.dry_run_flg:
+            self.logger.warn('Upload skipped due to dry run flg file:%s' % upload_path)
+            return md5_seconds, upload_seconds
+
+        obj_key = Key(self.s3bucket)
+        obj_key.key = s3path
+        obj_key.set_metadata('original_size', str(size))
+        upload_start_time = time.time()
+        obj_key.set_contents_from_file(target_file_p, encrypt_key=True)
+        upload_seconds = time.time() - upload_start_time
+
+        self.stats['files_uploaded'] += 1
+        self.stats['bytes_uploaded'] += size
+
+        return md5_seconds, upload_seconds
+
     def _backup_file(self, file_path, upload_path):
 
         if not self._is_modified(file_path):
-            self.logger.info('File is not modified. Skipping:%s, %s' % (file_path, upload_path))
+            self.logger.debug('File is not modified. Skipping:%s, %s' % (file_path, upload_path))
+            self.stats['files_processed'] += 1
             return
 
-        with tempfile.TemporaryFile() as out_file_p:
-            with open(file_path, 'rb') as in_file_p:
+        unicode_file_path = file_path.decode('utf8')
+        (mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime) = os.stat(file_path)
+        with open(file_path, 'rb') as in_file_p:
+            with tempfile.TemporaryFile() as out_file_p:
 
-                unicode_file_path = file_path.decode('utf8')
-
-                (mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime) = os.stat(file_path)
+                upload_file_p = in_file_p
 
                 encryption_seconds = 0
                 encrypted_size = 0
                 if self.encryption_flg:
-                    encryption_start_time = time.time()
-                    self.encryptor.encrypt_file(in_file_p, out_file_p)
-                    encryption_seconds = time.time() - encryption_start_time
-                    encrypted_size = out_file_p.tell()
-                    in_file_p.seek(0, os.SEEK_SET)
-                    out_file_p.seek(0, os.SEEK_SET)
+                    encrypted_size, encryption_seconds = self._encrypt_file(in_file_p, out_file_p)
+                    upload_file_p = out_file_p
 
-                md5_start_time = time.time()
-                md5sum = calc_md5_from_file(out_file_p)
-                md5_seconds = time.time() - md5_start_time
-                out_file_p.seek(0, os.SEEK_SET)
+                log_parts = [
+                    'path=%s' % upload_path,
+                    'size=%s' % size,
+                    'enc_size=%s' % encrypted_size,
+                ]
+                self.logger.debug(' '.join(log_parts))
 
                 file_info = {
                     'size': size,
@@ -169,50 +220,28 @@ class S4Backupper():
                     'file_path': unicode_file_path,
                     'upload_path': upload_path.decode('utf8'),
                 }
-
-                log_parts = [
-                    'file=%s' % file_path,
-                    'path=%s' % upload_path,
-                    'md5=%s' % md5sum,
-                    'size=%s' % size,
-                    'enc_size=%s' % encrypted_size,
-                    'enc_sec={:.3f}'.format(encryption_seconds),
-                    'md5_sec={:.3f}'.format(md5_seconds),
-                ]
-                self.logger.debug(' '.join(log_parts))
-
                 self.stats['files_scanned'] += 1
                 self.stats['bytes_scanned'] += size
 
-                s3path = '/'.join([self.s3prefix, upload_path])
-                if s3path in self.s3keys:
-                    cached_key = self.s3keys[s3path]
-                    if cached_key.etag == '"%s"' % md5sum:
-                        self.logger.debug('%s/%s skipped file=%s' % (self.stats['files_scanned'], self.stats['files_total'], upload_path))
-                        self.state_writer.write_dict(file_info)
-                        return
+                meta_info = {
+                    'original_size': str(size),
+                }
 
-                fkey = self.s3bucket.get_key(s3path)
-                if fkey and fkey.etag == '"%s"' % md5sum:
-                    self.logger.debug('%s/%s checked and skipped file=%s' % (self.stats['files_scanned'], self.stats['files_total'], upload_path))
+                md5_seconds, upload_seconds = self._upload_file(upload_path, size, upload_file_p)
+                if not self.dry_run_flg:
                     self.state_writer.write_dict(file_info)
-                    return
 
-                # file does not exist or modified
-                if self.dry_run_flg:
-                    self.logger.warn('Upload skipped due to dry run flg file:%s' % upload_path)
-                    return
+                log_parts = [
+                    'file={}'.format(file_path),
+                    'path={}'.format(upload_path),
+                    'mtime={:}'.format(mtime),
+                    'md5_sec={:.3f}'.format(md5_seconds),
+                    'upload_sec={:.3f}'.format(upload_seconds),
+                    'enc_sec={:.3f}'.format(encryption_seconds),
+                ]
+                self.logger.debug(' '.join(log_parts))
 
-                obj_key = Key(self.s3bucket)
-                obj_key.key = s3path
-                obj_key.set_metadata('original_size', str(size))
-                obj_key.set_contents_from_file(out_file_p, encrypt_key=True)
-
-                self.state_writer.write_dict(file_info)
-
-                self.stats['files_uploaded'] += 1
-                self.stats['bytes_uploaded'] += size
-
+                self.stats['files_processed'] += 1
                 self.logger.debug('%s/%s uploaded file=%s' % (self.stats['files_scanned'], self.stats['files_total'], upload_path))
 
     def _auto_log_update(self):
@@ -220,24 +249,26 @@ class S4Backupper():
         if self.update_count % 20 != 0:
             return
 
-        bytes_total = self.stats['bytes_total']
-        bytes_uploaded = self.stats['bytes_uploaded']
-        bytes_scanned = self.stats['bytes_scanned']
-        self.logger.info(
-            'Bytes uploaded:{}({:.2f}%) '.format(humanize_bytes(bytes_uploaded), percentize(bytes_uploaded, bytes_total)) +
-            'scanned:{}({:.2f}%) '.format(humanize_bytes(bytes_scanned), percentize(bytes_scanned, bytes_total)) +
-            'total:{} '.format(humanize_bytes(self.stats['bytes_total'])) +
-            ''
-        )
+        # bytes_total = self.stats['bytes_total']
+        # bytes_uploaded = self.stats['bytes_uploaded']
+        # bytes_scanned = self.stats['bytes_scanned']
+        # self.logger.info(
+        #     'Bytes uploaded:{}({:.2f}%) '.format(humanize_bytes(bytes_uploaded), percentize(bytes_uploaded, bytes_total)) +
+        #     'scanned:{}({:.2f}%) '.format(humanize_bytes(bytes_scanned), percentize(bytes_scanned, bytes_total)) +
+        #     'total:{} '.format(humanize_bytes(self.stats['bytes_total'])) +
+        #     ''
+        # )
 
         files_total = self.stats['files_total']
         if files_total == 0:
             files_total = 1
+
+        files_processed = self.stats['files_processed']
         files_uploaded = self.stats['files_uploaded']
         files_scanned = self.stats['files_scanned']
         self.logger.info(
-            'Files uploaded:{}({:.2f}%) '.format(files_uploaded, percentize(files_uploaded, files_total)) +
-            'scanned:{}({:.2f}%) '.format(files_scanned, percentize(files_scanned, files_total)) +
+            'Files processed:{}({:.2f}%) '.format(files_processed, percentize(files_processed, files_total)) +
+            'uploaded:{} '.format(files_uploaded) +
             'total:{} '.format(files_total) +
             ''
         )
