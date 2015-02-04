@@ -120,10 +120,9 @@ class S4Backupper():
         else:
             self.encryptor = None
 
-    def _backup_file(self, file_path, upload_path):
+    def _is_modified(self, file_path):
 
         unicode_file_path = file_path.decode('utf8')
-
         (mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime) = os.stat(file_path)
 
         if unicode_file_path in self.prev_state:
@@ -131,11 +130,22 @@ class S4Backupper():
 
             if size == prev_file_state['size'] and \
                     mtime == prev_file_state['mtime']:
-                self.logger.debug('File is not modified. Skipping:%s, %s' % (file_path, upload_path))
-                return
+                return False
+
+        return True
+
+    def _backup_file(self, file_path, upload_path):
+
+        if not self._is_modified(file_path):
+            self.logger.info('File is not modified. Skipping:%s, %s' % (file_path, upload_path))
+            return
 
         with tempfile.TemporaryFile() as out_file_p:
             with open(file_path, 'rb') as in_file_p:
+
+                unicode_file_path = file_path.decode('utf8')
+
+                (mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime) = os.stat(file_path)
 
                 encryption_seconds = 0
                 encrypted_size = 0

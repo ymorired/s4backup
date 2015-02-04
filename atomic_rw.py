@@ -25,7 +25,7 @@ class AtomicRWer(object):
             raise Exception('Input must be dictionary!')
 
         output_string = json.dumps(record, ensure_ascii=False).encode('utf8')
-        checksum = '{:8x}'.format(zlib.crc32(output_string)).encode('utf8')
+        checksum = '{:x}'.format(zlib.crc32(output_string)).encode('utf8')
 
         self.w_fd.write(output_string + b' ' + checksum + b'\n')
 
@@ -40,12 +40,15 @@ class AtomicRWer(object):
         with open(self.file_path, 'rb') as r_fd:
             for line in r_fd:
                 record, checksum = line.strip().rsplit(b' ', 1)
-                if checksum.decode('utf8') == '{:8x}'.format(zlib.crc32(record)).encode('utf8'):
+                validation_checksum = '{:x}'.format(zlib.crc32(record)).encode('utf8')
+                unicode_record = record.decode('utf8')
+                if checksum.decode('utf8') == validation_checksum:
                     try:
-                        val = json.loads(record.decode('utf8'))
+                        val = json.loads(unicode_record)
                         yield val
                     except ValueError as e:
-                        pass
+                        print('Failed to parse json line:{}'.format(unicode_record))
                 else:
                     # checksum error
-                    pass
+                    calced_checksum = '{:x}'.format(zlib.crc32(record)).encode('utf8')
+                    print('Error on checksum validation calced_checksum:{}, read_checksum:{}'.format(calced_checksum, checksum.decode('utf8')))
