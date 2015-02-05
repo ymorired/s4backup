@@ -512,12 +512,20 @@ if __name__ == '__main__':
     parser_push = subparsers.add_parser('push', help='execute backup against current working directory')
     parser_push.add_argument('-d', '--dry', dest='dry_run', action='store_true', help='Dry run')
 
+    parser_list = subparsers.add_parser('list', help='list files from latest backup')
+
+    parser_restore = subparsers.add_parser('restore', help='restore')
+
     parsed_args = parser.parse_args()
 
     if parsed_args.subparser == 'init':
         init()
     elif parsed_args.subparser == 'config':
         config(parsed_args)
+    elif parsed_args.subparser == 'list':
+        print('list!')
+    elif parsed_args.subparser == 'restore':
+        print('restore!')
     else:
         execute_backup(parsed_args.dry_run)
 
