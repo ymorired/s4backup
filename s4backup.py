@@ -424,32 +424,17 @@ class S4Backupper():
             locker.release()
 
     def _fetch_list(self):
-        upload_path = '/'.join(['meta', 'index.txt'])
-        s3path = '/'.join([self.s3prefix, upload_path])
-
-        fkey = self.s3bucket.get_key(s3path)
-        if fkey is None:
-            raise Exception('AAAA!')
-
+        remote_path = '/'.join(['meta', 'index.txt'])
         remote_index_file_path = os.path.join(self.target_path, CONFIG_DIR, 'remote_index.txt')
-        with open(remote_index_file_path, 'wb') as out_file_p:
-            with tempfile.TemporaryFile() as temp_file_p:
-                fkey.get_contents_to_file(temp_file_p)
-                # fkey.get_contents_to_filename(remote_index_file_path)
-                temp_file_p.seek(0, os.SEEK_SET)
 
-                decryption_start_time = time.time()
-                self.encryptor.decrypt_file(temp_file_p, out_file_p)
-                decryption_seconds = time.time() - decryption_start_time
+        self._retrive_file(remote_path, remote_index_file_path)
 
-        self.logger.info('Fetched list to {}'.format(remote_index_file_path))
-
-    def _retrive_file(self, s3path, output_file_path):
-        # s3path = '/'.join([self.s3prefix, upload_path])
+    def _retrive_file(self, remote_path, output_file_path):
+        s3path = '/'.join([self.s3prefix, remote_path])
 
         fkey = self.s3bucket.get_key(s3path)
         if fkey is None:
-            raise Exception('AAAA!')
+            raise Exception('Remote key does not exist! key:{}'.format(s3path))
 
         dirname = os.path.dirname(output_file_path)
         if not os.path.isdir(dirname):
@@ -473,7 +458,6 @@ class S4Backupper():
                 decryption_seconds = time.time() - decryption_start_time
 
         self.logger.info('Fetched list to {}'.format(output_file_path))
-
 
     def fetch_list(self):
         locker = SimpleFileLock(os.path.join(self.target_path, CONFIG_DIR, LOCK_FILE_NAME))
@@ -515,10 +499,9 @@ class S4Backupper():
         for rec in recs:
             file_name = unicode_to_filename(rec['file_path'])
 
-            s3path = '/'.join([self.s3prefix, 'data', rec['s3_path']])
+            remote_path = '/'.join(['data', rec['s3_path']])
             file_path = os.path.join(output_path, file_name)
-            self._retrive_file(s3path, file_path)
-
+            self._retrive_file(remote_path, file_path)
 
     def restore(self):
         locker = SimpleFileLock(os.path.join(self.target_path, CONFIG_DIR, LOCK_FILE_NAME))
