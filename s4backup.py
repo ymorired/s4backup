@@ -324,6 +324,15 @@ class S4Backupper():
 
         files = self.file_lister.get_file_list()
 
+        if self.hash_filename_flg:
+            hashed_names = set([])
+            for test_target in files:
+                relative_path = test_target.replace(self.target_path + '/', "", 1)
+                relative_path = calc_sha1_from_str(relative_path)
+                if relative_path in hashed_names:
+                    raise Exception('Filename hash is duplicated! path:{}'.format(test_target))
+                hashed_names.add(relative_path)
+
         self._save_directory_state(files)
 
         for found_file in files:
