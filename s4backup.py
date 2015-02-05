@@ -345,8 +345,8 @@ class S4Backupper():
                 relative_path = found_file.replace(self.target_path + '/', "", 1)
                 (mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime) = os.stat(found_file)
                 parts = [
-                    'type:file',
-                    u'file_path:{}'.format(relative_path.decode('utf8')),
+                    u'type:file',
+                    u'file_path:{}'.format(filename_to_unicode(relative_path)),
                     's3_path:{}'.format(self._convert_to_upload_filename(found_file)),
                     'size:{:}'.format(size),
                     'ctime:{:}'.format(ctime),
@@ -444,6 +444,37 @@ class S4Backupper():
 
         self.logger.info('Fetched list to {}'.format(remote_index_file_path))
 
+    def _retrive_file(self, s3path, output_file_path):
+        # s3path = '/'.join([self.s3prefix, upload_path])
+
+        fkey = self.s3bucket.get_key(s3path)
+        if fkey is None:
+            raise Exception('AAAA!')
+
+        dirname = os.path.dirname(output_file_path)
+        if not os.path.isdir(dirname):
+            os.makedirs(dirname)
+
+        parts = [
+            's3_path:{}'.format(s3path),
+            'output_filename:{}'.format(output_file_path)
+        ]
+        self.logger.info(' '.join(parts))
+
+        with tempfile.TemporaryFile() as temp_file_p:
+            with open(output_file_path, 'wb') as out_file_p:
+
+                fkey.get_contents_to_file(temp_file_p)
+                # fkey.get_contents_to_filename(remote_index_file_path)
+                temp_file_p.seek(0, os.SEEK_SET)
+
+                decryption_start_time = time.time()
+                self.encryptor.decrypt_file(temp_file_p, out_file_p)
+                decryption_seconds = time.time() - decryption_start_time
+
+        self.logger.info('Fetched list to {}'.format(output_file_path))
+
+
     def fetch_list(self):
         locker = SimpleFileLock(os.path.join(self.target_path, CONFIG_DIR, LOCK_FILE_NAME))
         if not locker.aquire_lock():
@@ -457,6 +488,52 @@ class S4Backupper():
             raise e
         finally:
             locker.release()
+
+
+    def _restore(self):
+        # self._fetch_list()
+
+        output_path = 'output'
+        os.makedirs(os.path.join(output_path))
+
+        recs = []
+        remote_index_file_path = os.path.join(self.target_path, CONFIG_DIR, 'remote_index.txt')
+        with open(remote_index_file_path, 'rb') as out_file_p:
+
+            for line in out_file_p:
+                rec = {}
+                line = line.rstrip()
+                for col in line.split('\t'):
+                    vs = col.split(':', 1)
+                    k = vs[0]
+                    v = vs[1]
+                    rec[k] = v.decode('utf8')
+
+                if rec['type'] == 'file':
+                    recs.append(rec)
+
+        for rec in recs:
+            file_name = unicode_to_filename(rec['file_path'])
+
+            s3path = '/'.join([self.s3prefix, 'data', rec['s3_path']])
+            file_path = os.path.join(output_path, file_name)
+            self._retrive_file(s3path, file_path)
+
+
+    def restore(self):
+        locker = SimpleFileLock(os.path.join(self.target_path, CONFIG_DIR, LOCK_FILE_NAME))
+        if not locker.aquire_lock():
+            self.logger.error('Cannot get lock!')
+            return
+
+        try:
+            self._restore()
+        except Exception as e:
+            self.logger.exception(e)
+            raise e
+        finally:
+            locker.release()
+
 
 def init():
     config_path = os.path.join(os.getcwd(), CONFIG_DIR)
@@ -590,6 +667,12 @@ def fetch_list():
     backupper.fetch_list()
 
 
+def restore():
+    _assure_initialized()
+
+    backupper = _initialize_backupper(False)
+    backupper.restore()
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
@@ -618,7 +701,7 @@ if __name__ == '__main__':
     elif parsed_args.subparser == 'fetch_list':
         fetch_list()
     elif parsed_args.subparser == 'restore':
-        print('restore!')
+        restore()
     else:
         execute_backup(parsed_args.dry_run)
 

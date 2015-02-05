@@ -4,6 +4,7 @@ import os
 import errno
 import hashlib
 
+import unicodedata
 
 def mkdir_p(path):
     try:
@@ -65,4 +66,16 @@ def percentize(progress, total):
         total = 1
     total = float(total)
     return progress / total * 100
+
+
+def filename_to_unicode(filename):
+    nfc_unicode_filename = filename.decode('utf8')
+    return unicodedata.normalize('NFC', nfc_unicode_filename)
+
+
+def unicode_to_filename(filename):
+    nfd_unicode_filename = unicodedata.normalize('NFD', filename)
+    return nfd_unicode_filename.encode('utf8')
+
+
 
