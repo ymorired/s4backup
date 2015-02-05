@@ -108,7 +108,6 @@ class S4Backupper():
             ignore_dirs=IGNORE_DIRS,
             ignore_file_patterns=IGNORE_FILE_RULES,
         )
-        self.update_count = 0
 
         state_path = os.path.join(abs_path, CONFIG_DIR, 'state.txt')
         self.state_writer = AtomicRWer(state_path)
@@ -121,6 +120,8 @@ class S4Backupper():
             self.encryptor = Encryptor.initialize_by_hex(key_str, iv_str)
         else:
             self.encryptor = None
+
+        self.update_count = 0
 
     def _is_modified(self, file_path):
 
@@ -149,42 +150,55 @@ class S4Backupper():
 
     def _upload_file(self, upload_path, meta_info, target_file_p):
 
-        upload_seconds = 0
-
         md5_start_time = time.time()
         md5sum = calc_md5_from_file(target_file_p)
         md5_seconds = time.time() - md5_start_time
         target_file_p.seek(0, os.SEEK_SET)
+
+        parts = [
+            'action:upload_md5',
+            's3path:{}'.format(upload_path),
+            'upload_md5_sec:{:.4f}'.format(md5_seconds),
+        ]
+        self.logger.debug(' '.join(parts))
 
         s3path = '/'.join([self.s3prefix, upload_path])
         if s3path in self.s3keys:
             cached_key = self.s3keys[s3path]
             if cached_key.etag == '"%s"' % md5sum:
                 self.logger.warn('Upload skipped using cached key %s ' % upload_path)
-                return md5_seconds, upload_seconds
+                return
 
+        # TODO: this action is verbose...
         fkey = self.s3bucket.get_key(s3path)
         if fkey and fkey.etag == '"%s"' % md5sum:
             self.logger.warn('%s skipped using remote key' % upload_path)
-            return md5_seconds, upload_seconds
+            return
 
         # file does not exist on s3 or modified from s3 version
         if self.dry_run_flg:
             self.logger.warn('Upload skipped due to dry run flg file:%s' % upload_path)
-            return md5_seconds, upload_seconds
+            return
 
         obj_key = Key(self.s3bucket)
         obj_key.key = s3path
-        for key, value in meta_info:
+        for key, value in meta_info.items():
             obj_key.set_metadata(key, value)
         upload_start_time = time.time()
         obj_key.set_contents_from_file(target_file_p, encrypt_key=True)
         upload_seconds = time.time() - upload_start_time
 
+        parts = [
+            'action:upload_s3',
+            's3path:{}'.format(upload_path),
+            'upload_sec:{:.4f}'.format(upload_seconds),
+        ]
+        self.logger.debug(' '.join(parts))
+
         self.stats['files_uploaded'] += 1
         # self.stats['bytes_uploaded'] += size
 
-        return md5_seconds, upload_seconds
+        return
 
     def _backup_file(self, file_path, upload_path):
 
@@ -228,7 +242,7 @@ class S4Backupper():
                     'mtime': str(mtime),
                 }
 
-                md5_seconds, upload_seconds = self._upload_file(upload_path, meta_info, upload_file_p)
+                self._upload_file(upload_path, meta_info, upload_file_p)
                 if not self.dry_run_flg:
                     self.state_writer.write_dict(file_info)
 
@@ -236,8 +250,6 @@ class S4Backupper():
                     'file={}'.format(file_path),
                     'path={}'.format(upload_path),
                     'mtime={:}'.format(mtime),
-                    'md5_sec={:.3f}'.format(md5_seconds),
-                    'upload_sec={:.3f}'.format(upload_seconds),
                     'enc_sec={:.3f}'.format(encryption_seconds),
                 ]
                 self.logger.debug(' '.join(log_parts))
@@ -326,6 +338,32 @@ class S4Backupper():
                 raise Exception('Filename hash is duplicated! path:{}'.format(test_target))
             hashed_names.add(relative_path)
 
+    def _save_finished_state(self, files):
+        index_file_path = os.path.join(self.target_path, CONFIG_DIR, 'index.txt')
+        with open(index_file_path, 'wt') as f:
+            for found_file in files:
+                relative_path = found_file.replace(self.target_path + '/', "", 1)
+                (mode, ino, dev, nlink, uid, gid, size, atime, mtime, ctime) = os.stat(found_file)
+                parts = [
+                    'type:file',
+                    u'file_path:{}'.format(relative_path.decode('utf8')),
+                    's3_path:{}'.format(self._convert_to_upload_filename(found_file)),
+                    'size:{:}'.format(size),
+                    'ctime:{:}'.format(ctime),
+                    'mtime:{:}'.format(mtime),
+                ]
+                line = u'\t'.join(parts) + u'\n'
+                f.write(line.encode('utf8'))
+
+            parts = [
+                'type:meta',
+                'time:{:}'.format(int(time.time()))
+            ]
+            f.write('\t'.join(parts) + '\n')
+
+        upload_path = '/'.join(['meta', 'index.txt'])
+        self._backup_file(index_file_path, upload_path)
+
     def _execute_backup(self):
         self.logger.info('Snapshot version:%s' % self.snapshot_version)
         time_start = time.time()
@@ -351,6 +389,8 @@ class S4Backupper():
             self._backup_file(found_file, '/'.join(['data', relative_path]))
             self._auto_log_update()
 
+        self._save_finished_state(files)
+
         # self.logger.info('Bytes uploaded:%s scanned:%s total:%s' % (self.stats['bytes_uploaded'], self.stats['bytes_scanned'], self.stats['bytes_total']))
         self.logger.info('Files uploaded:%s scanned:%s total:%s' % (self.stats['files_uploaded'], self.stats['files_scanned'], self.stats['files_total']))
 
@@ -370,9 +410,7 @@ class S4Backupper():
         self._backup_file(summary_file_path, upload_path)
 
     def execute_backup(self):
-
         locker = SimpleFileLock(os.path.join(self.target_path, CONFIG_DIR, LOCK_FILE_NAME))
-
         if not locker.aquire_lock():
             self.logger.error('Cannot get lock!')
             return
@@ -385,6 +423,40 @@ class S4Backupper():
         finally:
             locker.release()
 
+    def _fetch_list(self):
+        upload_path = '/'.join(['meta', 'index.txt'])
+        s3path = '/'.join([self.s3prefix, upload_path])
+
+        fkey = self.s3bucket.get_key(s3path)
+        if fkey is None:
+            raise Exception('AAAA!')
+
+        remote_index_file_path = os.path.join(self.target_path, CONFIG_DIR, 'remote_index.txt')
+        with open(remote_index_file_path, 'wb') as out_file_p:
+            with tempfile.TemporaryFile() as temp_file_p:
+                fkey.get_contents_to_file(temp_file_p)
+                # fkey.get_contents_to_filename(remote_index_file_path)
+                temp_file_p.seek(0, os.SEEK_SET)
+
+                decryption_start_time = time.time()
+                self.encryptor.decrypt_file(temp_file_p, out_file_p)
+                decryption_seconds = time.time() - decryption_start_time
+
+        self.logger.info('Fetched list to {}'.format(remote_index_file_path))
+
+    def fetch_list(self):
+        locker = SimpleFileLock(os.path.join(self.target_path, CONFIG_DIR, LOCK_FILE_NAME))
+        if not locker.aquire_lock():
+            self.logger.error('Cannot get lock!')
+            return
+
+        try:
+            self._fetch_list()
+        except Exception as e:
+            self.logger.exception(e)
+            raise e
+        finally:
+            locker.release()
 
 def init():
     config_path = os.path.join(os.getcwd(), CONFIG_DIR)
@@ -461,9 +533,7 @@ def config(args_obj):
         print('%s=%s' % (key, config_dict[key]))
 
 
-def execute_backup(dry_run_flg):
-    _assure_initialized()
-
+def _initialize_backupper(dry_run_flg):
     config_json_path = os.path.join(os.getcwd(), CONFIG_DIR, CONFIG_FILE_NAME)
     with open(config_json_path) as f:
         config_dict = json.load(f)
@@ -503,7 +573,21 @@ def execute_backup(dry_run_flg):
         iv_str=config_dict.get('iv', ''),
         dry_run_flg=dry_run_flg,
     )
+    return backupper
+
+
+def execute_backup(dry_run_flg):
+    _assure_initialized()
+
+    backupper = _initialize_backupper(dry_run_flg)
     backupper.execute_backup()
+
+
+def fetch_list():
+    _assure_initialized()
+
+    backupper = _initialize_backupper(False)
+    backupper.fetch_list()
 
 
 if __name__ == '__main__':
@@ -521,7 +605,7 @@ if __name__ == '__main__':
     parser_push = subparsers.add_parser('push', help='execute backup against current working directory')
     parser_push.add_argument('-d', '--dry', dest='dry_run', action='store_true', help='Dry run')
 
-    parser_list = subparsers.add_parser('list', help='list files from latest backup')
+    parser_fetch_list = subparsers.add_parser('fetch_list', help='list files from latest backup')
 
     parser_restore = subparsers.add_parser('restore', help='restore')
 
@@ -531,8 +615,8 @@ if __name__ == '__main__':
         init()
     elif parsed_args.subparser == 'config':
         config(parsed_args)
-    elif parsed_args.subparser == 'list':
-        print('list!')
+    elif parsed_args.subparser == 'fetch_list':
+        fetch_list()
     elif parsed_args.subparser == 'restore':
         print('restore!')
     else:
