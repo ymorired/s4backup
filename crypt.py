@@ -41,13 +41,9 @@ class Encryptor():
         # keep chunk size large for speed but divisible by 16B
         chunksize = 1024
 
-        padded = False
         while True:
             chunk = in_file_p.read(chunksize)
-            if len(chunk) == 0 and padded:
-                # it's an empty chunk. We don't need it.
-                break
-            elif len(chunk) == chunksize:
+            if len(chunk) == chunksize:
                 # We've read a full encryptable chunk with length divisible by 16B
                 out_file_p.write(crypt.encrypt(chunk))
             else:
@@ -61,7 +57,7 @@ class Encryptor():
                     padding.write('%02x' % padding_bytes)
                 padded_chunk = chunk + binascii.unhexlify(padding.getvalue())
                 out_file_p.write(crypt.encrypt(padded_chunk))
-                padded = True
+                break
 
     def encrypt_file_by_path(self, in_file, out_file):
         with open(in_file, 'rb') as in_file_p, open(out_file, 'wb') as out_file_p:
