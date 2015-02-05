@@ -66,7 +66,7 @@ class S4Backupper():
         self.log_path = log_path
 
         self.stats = {
-            'bytes_uploaded': 0,
+            # 'bytes_uploaded': 0,
             'bytes_scanned': 0,
             'files_uploaded': 0,
             'files_scanned': 0,
@@ -147,9 +147,8 @@ class S4Backupper():
 
         return encrypted_size, encryption_seconds
 
-    def _upload_file(self, upload_path, size, target_file_p):
+    def _upload_file(self, upload_path, meta_info, target_file_p):
 
-        md5_seconds = 0
         upload_seconds = 0
 
         md5_start_time = time.time()
@@ -176,13 +175,14 @@ class S4Backupper():
 
         obj_key = Key(self.s3bucket)
         obj_key.key = s3path
-        obj_key.set_metadata('original_size', str(size))
+        for key, value in meta_info:
+            obj_key.set_metadata(key, value)
         upload_start_time = time.time()
         obj_key.set_contents_from_file(target_file_p, encrypt_key=True)
         upload_seconds = time.time() - upload_start_time
 
         self.stats['files_uploaded'] += 1
-        self.stats['bytes_uploaded'] += size
+        # self.stats['bytes_uploaded'] += size
 
         return md5_seconds, upload_seconds
 
@@ -225,9 +225,10 @@ class S4Backupper():
 
                 meta_info = {
                     'original_size': str(size),
+                    'mtime': str(mtime),
                 }
 
-                md5_seconds, upload_seconds = self._upload_file(upload_path, size, upload_file_p)
+                md5_seconds, upload_seconds = self._upload_file(upload_path, meta_info, upload_file_p)
                 if not self.dry_run_flg:
                     self.state_writer.write_dict(file_info)
 
@@ -307,6 +308,24 @@ class S4Backupper():
 
         self.prev_state = prev_state
 
+    def _convert_to_upload_filename(self, file_path):
+        relative_path = file_path.replace(self.target_path + '/', "", 1)
+        if self.hash_filename_flg:
+            relative_path = calc_sha1_from_str(relative_path)
+
+        return relative_path
+
+    def _validate_filenames(self, file_paths):
+        if not self.hash_filename_flg:
+            return
+
+        hashed_names = set([])
+        for test_target in file_paths:
+            relative_path = self._convert_to_upload_filename(test_target)
+            if relative_path in hashed_names:
+                raise Exception('Filename hash is duplicated! path:{}'.format(test_target))
+            hashed_names.add(relative_path)
+
     def _execute_backup(self):
         self.logger.info('Snapshot version:%s' % self.snapshot_version)
         time_start = time.time()
@@ -324,25 +343,15 @@ class S4Backupper():
 
         files = self.file_lister.get_file_list()
 
-        if self.hash_filename_flg:
-            hashed_names = set([])
-            for test_target in files:
-                relative_path = test_target.replace(self.target_path + '/', "", 1)
-                relative_path = calc_sha1_from_str(relative_path)
-                if relative_path in hashed_names:
-                    raise Exception('Filename hash is duplicated! path:{}'.format(test_target))
-                hashed_names.add(relative_path)
-
+        self._validate_filenames(files)
         self._save_directory_state(files)
 
         for found_file in files:
-            relative_path = found_file.replace(self.target_path + '/', "", 1)
-            if self.hash_filename_flg:
-                relative_path = calc_sha1_from_str(relative_path)
+            relative_path = self._convert_to_upload_filename(found_file)
             self._backup_file(found_file, '/'.join(['data', relative_path]))
             self._auto_log_update()
 
-        self.logger.info('Bytes uploaded:%s scanned:%s total:%s' % (self.stats['bytes_uploaded'], self.stats['bytes_scanned'], self.stats['bytes_total']))
+        # self.logger.info('Bytes uploaded:%s scanned:%s total:%s' % (self.stats['bytes_uploaded'], self.stats['bytes_scanned'], self.stats['bytes_total']))
         self.logger.info('Files uploaded:%s scanned:%s total:%s' % (self.stats['files_uploaded'], self.stats['files_scanned'], self.stats['files_total']))
 
         time_end = time.time()
@@ -354,7 +363,7 @@ class S4Backupper():
             seconds_spent = time_end - time_start
             f.write('seconds_spent:%s\n' % (seconds_spent))
             f.write('\n')
-            f.write('Bytes uploaded:%s scanned:%s total:%s\n' % (self.stats['bytes_uploaded'], self.stats['bytes_scanned'], self.stats['bytes_total']))
+            # f.write('Bytes uploaded:%s scanned:%s total:%s\n' % (self.stats['bytes_uploaded'], self.stats['bytes_scanned'], self.stats['bytes_total']))
             f.write('Files uploaded:%s scanned:%s total:%s\n' % (self.stats['files_uploaded'], self.stats['files_scanned'], self.stats['files_total']))
 
         upload_path = '/'.join(['logs', self.snapshot_version, 'summary.txt'])
