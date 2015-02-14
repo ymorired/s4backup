@@ -122,6 +122,7 @@ class S4Backupper():
             self.encryptor = None
 
         self.update_count = 0
+        self.update_time = 0
 
     def _is_modified(self, file_path):
 
@@ -259,8 +260,10 @@ class S4Backupper():
 
     def _auto_log_update(self):
         self.update_count += 1
-        if self.update_count % 20 != 0:
+        if self.update_count % 10 != 0 or self.update_time + 5 > time.time():
             return
+
+        self.update_time = time.time()
 
         # bytes_total = self.stats['bytes_total']
         # bytes_uploaded = self.stats['bytes_uploaded']
@@ -371,6 +374,7 @@ class S4Backupper():
         self._load_prev_state()
         self.state_writer.prepare_write()
 
+        self.logger.info('Start caching keys')
         s3path = '/'.join([self.s3prefix, 'data'])
         key_num = 0
         for fkey in self.s3bucket.list(s3path):
@@ -380,6 +384,7 @@ class S4Backupper():
         self.logger.info('Cached keys:%s' % key_num)
 
         files = self.file_lister.get_file_list()
+        self.logger.info('Target files:{:}'.format(len(files)))
 
         self._validate_filenames(files)
         self._save_directory_state(files)
