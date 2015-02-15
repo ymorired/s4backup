@@ -26,8 +26,10 @@ class SimpleFileLock():
         return True
 
     def release(self):
-        if self.is_locked:
-            os.close(self.fd)
-            os.unlink(self.lockfile)
-            self.is_locked = False
+        if not self.is_locked:
+            return
+
+        os.close(self.fd)
+        os.unlink(self.lockfile)
+        self.is_locked = False
 
