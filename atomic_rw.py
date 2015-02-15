@@ -5,6 +5,7 @@ __author__ = 'yuichi'
 import os
 import json
 import zlib
+import logging
 
 
 class AtomicRWer(object):
@@ -13,6 +14,7 @@ class AtomicRWer(object):
 
         self.file_path = os.path.abspath(file_path)
         self.w_fd = None
+        self.logger = logging.getLogger(__name__)
 
     def prepare_write(self):
         self.w_fd = open(self.file_path, 'ab')
@@ -47,8 +49,9 @@ class AtomicRWer(object):
                         val = json.loads(unicode_record)
                         yield val
                     except ValueError as e:
-                        print('Failed to parse json line:{}'.format(unicode_record))
+                        self.logger.warn('Failed to parse json line:{}'.format(unicode_record))
                 else:
                     # checksum error
                     calced_checksum = '{:x}'.format(zlib.crc32(record)).encode('utf8')
-                    print('Error on checksum validation calced_checksum:{}, read_checksum:{}'.format(calced_checksum, checksum.decode('utf8')))
+                    warn_msg = 'Error on checksum validation calced_checksum:{}, read_checksum:{}'.format(calced_checksum, checksum.decode('utf8'))
+                    self.logger.warn(warn_msg)
